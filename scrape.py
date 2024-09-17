@@ -59,6 +59,7 @@ def scrape_game_data(game_url):
     
     # GET MATCHID from URL
     game_id = game_url.split('/')[0]
+    print(url + game_url)
 
     game_response = requests.get(url + game_url)
     game_soup = BeautifulSoup(game_response.content, 'html.parser')
@@ -117,21 +118,23 @@ def scrape_game_data(game_url):
         get_org(team2_link)
         
     # MAIN GAME STUFF (THIS IS WHAT GOES IN THE DOCUMENTDB)
-    main_stats_div = game_soup.find('div', class_='wf-card')
+    main_stats_div = game_soup.find('div', class_='vm-stats')
     main_stats_container = main_stats_div.find('div', class_='vm-stats-container')
     vm_stats_games = main_stats_container.find_all('div', class_='vm-stats-game')
     
     maps_arr = []
-    for map_div in vm_stats_games:
+    for game_div in vm_stats_games:
         
-        game_id = map_div['data-game-id']
+        game_id = game_div['data-game-id']
+        if game_id == 'all': continue
+        print(game_id)
         
         # takes in all
         map_dict = {"game_id": game_id}
         
         ########################## Header Info #####################################
-        game_header_div = map_div.find('div', class_="vm-stats-game-header")
-        
+        game_header_div = game_div.find('div', class_="vm-stats-game-header")
+
         team1_div = game_header_div.find('div', class_='team')
         map_div = game_header_div.find('div', class_='map')
         team2_div = game_header_div.find('div', class_='team mod-right')
@@ -143,21 +146,25 @@ def scrape_game_data(game_url):
         map_duration = map_div.find('div', class_='map-duration').text.strip()
         map_dict['map_duration'] = map_duration
         
-        team1_score = team1_div.find('div', class_='score').text.strip()
-        team1_name = team1_div.find('div', class_='team-name').text.strip()
+        map_dict['team1_score'] = team1_div.find('div', class_='score').text.strip()
+        map_dict['team1_name'] = team1_div.find('div', class_='team-name').text.strip()
         
-        team2_score = team2_div.find('div', class_='score').text.strip()
-        team2_name = team2_div.find('div', class_='team-name').text.strip()
+        map_dict['team2_score'] = team2_div.find('div', class_='score').text.strip()
+        map_dict['team2_name'] = team2_div.find('div', class_='team-name').text.strip()
         
         ########################## Round Info #####################################
         
-        rounds = map_div.find_all('div', class_='vlr-rounds-row-col')
+        rounds_div = game_div.find('div', class_='vlr-rounds')
+        rounds = rounds_div.find_all('div', class_='vlr-rounds-row-col')
         # Initialize an empty list to store the round results
         round_scores = []
 
         # Loop through the rounds and extract the title attribute (score)
         for round_div in rounds:
             round_title = round_div.get('title')
+            print(round_title)
+            input()
+
             if round_title:
                 round_scores.append(round_title)
 
@@ -203,7 +210,7 @@ def scrape_game_data(game_url):
         map_dict['game_data'] = team_data
     
         maps_arr.append(map_dict)
-    
+    print(maps_arr)
     # DECIDE WHAT TO DO WITH THE MAPS
                     
 def scrape_player_page(player_url):
