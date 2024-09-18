@@ -10,6 +10,7 @@ import os
 import time
 from pymongo import MongoClient
 from datetime import datetime
+import pdb
 
 # ----------------------- Configuration -----------------------
 
@@ -24,6 +25,8 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 # MongoDB connection string
 MONGODB_URI = os.getenv('MONGODB_URI')
+
+event_url = 'https://www.vlr.gg/stats/?event_group_id=61&event_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
 
 # ----------------------- Relational Database Setup (PostgreSQL) -----------------------
 
@@ -191,7 +194,6 @@ def scrape_game_data(game_url):
 
     full_game_url = base_url + game_url
     print(f"Scraping game: {full_game_url}")
-    input()
 
     game_response = requests.get(full_game_url)
     game_soup = BeautifulSoup(game_response.content, 'html.parser')
@@ -199,7 +201,8 @@ def scrape_game_data(game_url):
     # Extract match details
     match_header_super = game_soup.find('div', class_='match-header-super')
     date_div = match_header_super.find('div', {'data-utc-ts': True})
-    date_played = datetime.fromtimestamp(int(date_div['data-utc-ts']) / 1000).date() if date_div else None
+    # pdb.set_trace()
+    date_played = date_div['data-utc-ts'] if date_div else None
     tournament_div = match_header_super.find('div', style='font-weight: 700;')
     event_name = tournament_div.text.strip() if tournament_div else None
     patch_div = match_header_super.find('div', style='font-style: italic;')
@@ -251,7 +254,7 @@ def scrape_game_data(game_url):
         "rounds": [],  # Add round data if available
         "event": {
             "event_name": event_name,
-            "date": date_played.strftime('%Y-%m-%d') if date_played else None,
+            "date": date_played if date_played else None,
             "patch": patch
         }
     }
@@ -396,7 +399,7 @@ def scrape_player_page(player_url):
     print(f"Inserted player {player_name} (ID: {player_id}) into PostgreSQL.")
 
 def scrape_data():
-    response = requests.get(base_url + '/stats')
+    response = requests.get(event_url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
     # Find player links
@@ -410,7 +413,7 @@ def scrape_data():
             player_url = player_td.find('a')['href']
             player_matches_url = player_url.replace('/player/', '/player/matches/')
             scrape_player_page(player_url)
-            time.sleep(1)  # Delay between requests
+            # time.sleep(1)  # Delay between requests
 
             # Scrape matches the player has participated in
             internal_response = requests.get(base_url + player_matches_url)
@@ -419,7 +422,7 @@ def scrape_data():
             print(base_url + player_matches_url)
             for a_tag in match_links:
                 scrape_game_data(a_tag['href'])
-                time.sleep(1)  # Delay between requests
+                # time.sleep(1)  # Delay between requests
 
 # ----------------------- Main Execution -----------------------
 
