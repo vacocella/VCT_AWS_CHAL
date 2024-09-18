@@ -162,8 +162,6 @@ def scrape_game_data(game_url):
         # Loop through the rounds and extract the title attribute (score)
         for round_div in rounds:
             round_title = round_div.get('title')
-            print(round_title)
-            input()
 
             if round_title:
                 round_scores.append(round_title)
