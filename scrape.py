@@ -1,272 +1,435 @@
+# scrape.py
+
 import requests
 from bs4 import BeautifulSoup
-import pandas as pd
+from sqlalchemy import create_engine, Column, String, Integer, Float, Date, Boolean, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.exc import SQLAlchemyError
+from dotenv import load_dotenv
+import os
+import time
+from pymongo import MongoClient
+from datetime import datetime
 
+# ----------------------- Configuration -----------------------
 
-player_df = pd.DataFrame(columns=['player_name', 'player_url'])
-org_df = pd.DataFrame(columns=['org_name', 'org_url'])
+# Load environment variables from a .env file
+load_dotenv()
 
-dfs = {'org': org_df, 'player': player_df}
+# Base URL of the website
+base_url = 'https://www.vlr.gg'
 
-# Example URL to scrape
-url = 'https://www.vlr.gg'  # Replace with the actual target URL
+# PostgreSQL connection string
+DATABASE_URL = os.getenv('DATABASE_URL')
 
-def get_org(org_link):
-                        
-    team1_res = requests.get(url + org_link.get('href'))
-    team1_req_soup = BeautifulSoup(team1_res.content, 'html.parser')
-    
-    team_nation = team1_req_soup.find('div', class_='team-header')
-    nation = team_nation.find('div',class_='team-header-country').get_text(strip=True)
-    print(nation)
-    
-    
-def create_player_data(cells):
-    player_data = {
-        "player_id": cells[0],  
-        "agent": cells[1],
-        "rating": cells[2],
-        "acs": cells[3],
-        "kills": cells[4],
-        "deaths": cells[5],
-        "assists": cells[6],
-        "k_d_difference": cells[7],
-        "kast": cells[8],
-        "adr": cells[9],
-        "hs_percentage": cells[10],
-        "first_kills": cells[11],
-        "first_deaths": cells[12]
-    }
-    return player_data
+# MongoDB connection string
+MONGODB_URI = os.getenv('MONGODB_URI')
 
+# ----------------------- Relational Database Setup (PostgreSQL) -----------------------
 
-def process_team_table(table, team_data, team_index):
-    rows = table.find('tbody').find_all('tr')
-    team_data[team_index] = []  # Initialize an empty list for team players
+# Create engine and session for PostgreSQL
+engine = create_engine(DATABASE_URL)
+Session = sessionmaker(bind=engine)
+session = Session()
+Base = declarative_base()
 
-    for row in rows:
-        # Extract player name and player ID from the first column
-        player_td = row.find('td', class_='mod-player')
-        player_name = player_td.find('div', class_='text-of').text.strip()
-        player_href = player_td.find('a')['href']
-        player_id = player_href.split('/')[2]  # Extract the ID from /player/ID/NAME format
+# Define models according to your schema
+class Region(Base):
+    __tablename__ = 'regions'
+    region_id = Column(Integer, primary_key=True)
+    region_name = Column(String(100))
+    larger_region_id = Column(Integer, ForeignKey('regions.region_id'), nullable=True)
 
-        # Add player data to team_data at the correct index (0 for team1, 1 for team2)
-        team_data[team_index].append({'player_name': player_name, 'player_id': player_id})
-    return team_data
+    larger_region = relationship('Region', remote_side=[region_id])
+
+class Team(Base):
+    __tablename__ = 'teams'
+    team_id = Column(Integer, primary_key=True)
+    team_name = Column(String(100))
+    region_id = Column(Integer, ForeignKey('regions.region_id'))
+    founding_date = Column(Date, nullable=True)
+    active = Column(Boolean, default=True)
+
+    region = relationship('Region')
+
+class Player(Base):
+    __tablename__ = 'players'
+    player_id = Column(Integer, primary_key=True)
+    name = Column(String(100))
+    team_id = Column(Integer, ForeignKey('teams.team_id'))
+    role = Column(String(50))
+    region_id = Column(Integer, ForeignKey('regions.region_id'))
+
+    team = relationship('Team')
+    region = relationship('Region')
+
+class Map(Base):
+    __tablename__ = 'maps'
+    map_id = Column(Integer, primary_key=True)
+    map_name = Column(String(100))
+    active = Column(Boolean, default=True)
+
+class Match(Base):
+    __tablename__ = 'matches'
+    match_id = Column(Integer, primary_key=True)
+    team1_id = Column(Integer, ForeignKey('teams.team_id'))
+    team2_id = Column(Integer, ForeignKey('teams.team_id'))
+    map_id = Column(Integer, ForeignKey('maps.map_id'))
+    date_played = Column(Date)
+    team1_score = Column(Integer)
+    team2_score = Column(Integer)
+
+    team1 = relationship('Team', foreign_keys=[team1_id])
+    team2 = relationship('Team', foreign_keys=[team2_id])
+    map = relationship('Map')
+
+class MatchHistoryPlayer(Base):
+    __tablename__ = 'match_history_player'
+    match_id = Column(Integer, ForeignKey('matches.match_id'), primary_key=True)
+    player_id = Column(Integer, ForeignKey('players.player_id'), primary_key=True)
+    team_id = Column(Integer, ForeignKey('teams.team_id'))
+    agent = Column(String(50))
+    kills = Column(Integer)
+    assists = Column(Integer)
+    deaths = Column(Integer)
+    acs = Column(Float)
+    kast = Column(Float)
+    adr = Column(Float)
+    first_kills = Column(Integer)
+    first_deaths = Column(Integer)
+
+    match = relationship('Match')
+    player = relationship('Player')
+    team = relationship('Team')
+
+# Create tables in the database
+Base.metadata.create_all(engine)
+
+# ----------------------- NoSQL Database Setup (MongoDB) -----------------------
+
+# Create MongoDB client and access database and collections
+mongo_client = MongoClient(MONGODB_URI)
+mongo_db = mongo_client['valorantdb']  # You can name the database as you prefer
+games_collection = mongo_db['games']
+
+# ----------------------- Helper Functions -----------------------
+
+def extract_player_id_from_url(player_url):
+    url_parts = player_url.strip('/').split('/')
+    try:
+        idx = url_parts.index('player')
+        player_id = int(url_parts[idx + 1])
+        return player_id
+    except (ValueError, IndexError):
+        return None  # Unable to extract player_id
+
+def parse_stat(stat_text):
+    stat_values = stat_text.strip().replace('%', '').split('\n')
+    float_values = []
+    for val in stat_values:
+        val = val.strip()
+        if val == '/' or not val:
+            continue
+        try:
+            float_values.append(float(val))
+        except ValueError:
+            continue
+    if len(float_values) == 1:
+        return float_values[0]
+    elif len(float_values) > 1:
+        return sum(float_values) / len(float_values)
+    else:
+        return None
+
+# ----------------------- Scraping Functions -----------------------
+
+def get_region(region_name):
+    # Check if region exists
+    region = session.query(Region).filter_by(region_name=region_name).first()
+    if not region:
+        # Create new region
+        region = Region(region_name=region_name)
+        session.add(region)
+        session.commit()
+    return region.region_id
+
+def get_team(team_link):
+    # Extract the team ID from the link
+    team_id = int(team_link.split('/')[2])
+    team_url = base_url + team_link
+    team_res = requests.get(team_url)
+    team_soup = BeautifulSoup(team_res.content, 'html.parser')
+
+    team_header = team_soup.find('div', class_='team-header')
+    team_name = team_header.find('h1', class_='wf-title').text.strip()
+
+    # Get region (you may need to adjust this based on actual data available)
+    region_name = team_header.find('div', class_='team-header-country').text.strip()
+    region_id = get_region(region_name)
+
+    # Check if team already exists
+    existing_team = session.query(Team).filter_by(team_id=team_id).first()
+    if not existing_team:
+        # Insert team into database
+        new_team = Team(team_id=team_id, team_name=team_name, region_id=region_id)
+        session.add(new_team)
+        session.commit()
+        print(f"Inserted team {team_name} (ID: {team_id}) into PostgreSQL.")
+    else:
+        print(f"Team {team_name} (ID: {team_id}) already exists in PostgreSQL.")
+    return team_id
 
 def scrape_game_data(game_url):
+    # Extract match_id from URL
+    match_id = int(game_url.split('/')[1])
     
-    # GET MATCHID from URL
-    game_id = game_url.split('/')[0]
-    print(url + game_url)
+    # Check if the match already exists in MongoDB
+    existing_game = games_collection.find_one({'game_id': f'game_{match_id}'})
+    if existing_game:
+        print(f"Game with game_id game_{match_id} already exists in MongoDB.")
+        return
 
-    game_response = requests.get(url + game_url)
+    full_game_url = base_url + game_url
+    print(f"Scraping game: {full_game_url}")
+    input()
+
+    game_response = requests.get(full_game_url)
     game_soup = BeautifulSoup(game_response.content, 'html.parser')
-    
-    # Find the div with class match-header-super
+
+    # Extract match details
     match_header_super = game_soup.find('div', class_='match-header-super')
-    
-    # Extract the date from the first 'moment-tz-convert' div
-    date = match_header_super.find('div', {'data-moment-format': 'dddd, MMMM Do'}).text.strip()
+    date_div = match_header_super.find('div', {'data-utc-ts': True})
+    date_played = datetime.fromtimestamp(int(date_div['data-utc-ts']) / 1000).date() if date_div else None
+    tournament_div = match_header_super.find('div', style='font-weight: 700;')
+    event_name = tournament_div.text.strip() if tournament_div else None
+    patch_div = match_header_super.find('div', style='font-style: italic;')
+    patch = patch_div.text.strip() if patch_div else None
 
-    # Extract the time from the second 'moment-tz-convert' div
-    time = match_header_super.find('div', {'data-moment-format': 'h:mm A z'}).text.strip()
-
-    # Extract the patch from the div with style 'font-style: italic'
-    patch = match_header_super.find('div', style='font-style: italic;').text.strip()
-
-    # Find the div with the style font-weight: 700
-    toury_div = match_header_super.find('div', style='font-weight: 700;')
-    series = match_header_super.find('div', class_='match-header-event-series')
-
-    # Extract and print the text
-    if toury_div:
-        text = toury_div.text.strip()
-        series = series.text.strip()
-        print(f"Tourny: {text}: {series}")
-    
-    # Find the div with class match-header-vs
+    # Extract team information
     match_header_vs = game_soup.find('div', class_='match-header-vs')
-    match_header_vs_score = match_header_vs.find('div', class_='match-header-vs-score')
-    
-    score_spans = match_header_vs_score.find_all('span')
-
-    # Extract the first and last span
-    team1_score = score_spans[0].text.strip()  # First span (team 1 score)
-    team2_score = score_spans[-1].text.strip()  # Last span (team 2 score)
-
-    # Extract the match format (Bo3)
-    match_format = match_header_vs.find('div', class_='match-header-vs-note').text.strip()
-
-    # Find the first team name (mod-1)
     team1_div = match_header_vs.find('div', class_='match-header-link-name mod-1')
-    team1_name = team1_div.find('div', class_='wf-title-med').text.strip()
-
-    # Find the second team name (mod-2)
     team2_div = match_header_vs.find('div', class_='match-header-link-name mod-2')
+    team1_name = team1_div.find('div', class_='wf-title-med').text.strip()
     team2_name = team2_div.find('div', class_='wf-title-med').text.strip()
-        # Print the team names
-    print(f"Team 1: {team1_name} {team1_score}")
-    print(f"Team 2: {team2_name} {team2_score}")
+    team1_link = team1_div.find_parent('a')['href']
+    team2_link = team2_div.find_parent('a')['href']
+    team1_id = get_team(team1_link)
+    team2_id = get_team(team2_link)
 
-    if team1_name not in dfs['org'].values:
-        # search up team
-        team1_link = match_header_vs.find('a',class_='match-header-link wf-link-hover mod-1')
-        team2_link = match_header_vs.find('a',class_='match-header-link wf-link-hover mod-1')
-        get_org(team1_link)
-        get_org(team2_link)
-        
-    # MAIN GAME STUFF (THIS IS WHAT GOES IN THE DOCUMENTDB)
-    main_stats_div = game_soup.find('div', class_='vm-stats')
-    main_stats_container = main_stats_div.find('div', class_='vm-stats-container')
-    vm_stats_games = main_stats_container.find_all('div', class_='vm-stats-game')
-    
-    maps_arr = []
+    # Extract scores
+    scores_div = match_header_vs.find('div', class_='match-header-vs-score')
+    scores = scores_div.find_all('span') if scores_div else []
+    team1_score = int(scores[0].text.strip()) if scores else None
+    team2_score = int(scores[-1].text.strip()) if scores else None
+
+    # For simplicity, we'll use a placeholder map_id
+    map_id = 1  # You can adjust this to match actual map data
+
+    # Insert match data into PostgreSQL
+    existing_match = session.query(Match).filter_by(match_id=match_id).first()
+    if not existing_match:
+        new_match = Match(
+            match_id=match_id,
+            team1_id=team1_id,
+            team2_id=team2_id,
+            map_id=map_id,
+            date_played=date_played,
+            team1_score=team1_score,
+            team2_score=team2_score
+        )
+        session.add(new_match)
+        session.commit()
+        print(f"Inserted match {match_id} into PostgreSQL.")
+    else:
+        print(f"Match {match_id} already exists in PostgreSQL.")
+
+    # Prepare game data for MongoDB
+    game_data = {
+        "game_id": f"game_{match_id}",
+        "map": "Unknown",  # You can extract actual map data if available
+        "teams": [],
+        "rounds": [],  # Add round data if available
+        "event": {
+            "event_name": event_name,
+            "date": date_played.strftime('%Y-%m-%d') if date_played else None,
+            "patch": patch
+        }
+    }
+
+    # Process each team's player statistics
+    vm_stats_games = game_soup.find_all('div', class_='vm-stats-game')
+
     for game_div in vm_stats_games:
-        
-        game_id = game_div['data-game-id']
-        if game_id == 'all': continue
-        print(game_id)
-        
-        # takes in all
-        map_dict = {"game_id": game_id}
-        
-        ########################## Header Info #####################################
-        game_header_div = game_div.find('div', class_="vm-stats-game-header")
+        # Extract map name
+        map_name_div = game_div.find('div', class_='map')
+        map_name_span = map_name_div.find('span') if map_name_div else None
+        map_name = map_name_span.text.strip() if map_name_span else None
+        if map_name:
+            game_data['map'] = map_name
 
-        team1_div = game_header_div.find('div', class_='team')
-        map_div = game_header_div.find('div', class_='map')
-        team2_div = game_header_div.find('div', class_='team mod-right')
-        
-        # Extract the map name from the span inside the first div
-        map_name = map_div.find('span').text.strip()
-        map_dict['map_name'] = map_name
-        # Extract the duration from the div with class 'map-duration'
-        map_duration = map_div.find('div', class_='map-duration').text.strip()
-        map_dict['map_duration'] = map_duration
-        
-        map_dict['team1_score'] = team1_div.find('div', class_='score').text.strip()
-        map_dict['team1_name'] = team1_div.find('div', class_='team-name').text.strip()
-        
-        map_dict['team2_score'] = team2_div.find('div', class_='score').text.strip()
-        map_dict['team2_name'] = team2_div.find('div', class_='team-name').text.strip()
-        
-        ########################## Round Info #####################################
-        
-        rounds_div = game_div.find('div', class_='vlr-rounds')
-        rounds = rounds_div.find_all('div', class_='vlr-rounds-row-col')
-        # Initialize an empty list to store the round results
-        round_scores = []
+        player_tables = game_div.find_all('table', class_='wf-table-inset mod-overview')
+        team_ids = [team1_id, team2_id]
+        team_names = [team1_name, team2_name]
 
-        # Loop through the rounds and extract the title attribute (score)
-        for round_div in rounds:
-            round_title = round_div.get('title')
-
-            if round_title:
-                round_scores.append(round_title)
-
-        map_dict['round_scores'] = round_scores
-        
-        ########################## Player Score Info #####################################
-        
-        player_scores_tables = map_div.find_all('table', class_='wf-table-inset mod-overview')
-        
-        team_data = [{'org1_name': team1_name, 'org1_score': team1_score}, {'org2_name': team2_name, 'org2_score': team2_score}]  # Position 0 for team1, Position 1 for team2
-
-        for player_table, player_table_index in player_scores_tables:
-            
-            player_rows = player_table.find_all('tr')
-
-            for row in player_rows:
-                                    
+        for idx, table in enumerate(player_tables):
+            team_id = team_ids[idx]
+            team_name = team_names[idx]
+            team_data = {
+                "team_id": team_id,
+                "team_name": team_name,
+                "players": []
+            }
+            tbody = table.find('tbody')
+            rows = tbody.find_all('tr') if tbody else []
+            for row in rows:
                 player_td = row.find('td', class_='mod-player')
-                player_href = player_td.find('a')['href']
-                player_id = player_href.split('/')[2]  # Extract the ID from /player/ID/NAME format
+                player_name_div = player_td.find('div', class_='text-of') if player_td else None
+                player_name = player_name_div.text.strip() if player_name_div else None
+                player_href = player_td.find('a')['href'] if player_td else None
+                player_id = extract_player_id_from_url(player_href)
 
-                row_data_t = [player_id]  
-                row_data_ct = [player_id]  
-                row_data_both = [player_id] 
+                if player_id:
+                    # Check if player exists in the database
+                    existing_player = session.query(Player).filter_by(player_id=player_id).first()
+                    if not existing_player:
+                        # Scrape player details
+                        scrape_player_page(player_href)
+                    # Extract player stats
+                    stats_tds = row.find_all('td')
 
-                for td in row.find_all('td')[1:]:
-                    # Check if the column contains KAST data
-                    kast_t = td.find('span', class_='side mod-t').text.strip()
-                    row_data_t.append(kast_t)
-                    
-                    kast_both = td.find('span', class_='side mod-both').text.strip()
-                    row_data_both.append(kast_both)
-                    
-                    kast_ct = td.find('span', class_='side mod-ct').text.strip()
-                    row_data_ct.append(kast_ct)
-                
-                player_data_t = create_player_data(row_data_t)
-                player_data_ct = create_player_data(row_data_ct)
-                player_data_both = create_player_data(row_data_both)
+                    # Agent
+                    agent = stats_tds[1].find('img')['title'] if stats_tds[1].find('img') else None
 
-                team_data[player_table_index].update({'player_data_t': player_data_t, 'player_data_ct': player_data_ct, 'player_data_both': player_data_both})
-        
-        map_dict['game_data'] = team_data
-    
-        maps_arr.append(map_dict)
-    print(maps_arr)
-    # DECIDE WHAT TO DO WITH THE MAPS
-                    
+                    # Statistics
+                    kills = parse_stat(stats_tds[4].text)
+                    deaths = parse_stat(stats_tds[5].text)
+                    assists = parse_stat(stats_tds[6].text)
+                    acs = parse_stat(stats_tds[3].text)
+                    kast = parse_stat(stats_tds[8].text)
+                    adr = parse_stat(stats_tds[9].text)
+                    first_kills = parse_stat(stats_tds[11].text)
+                    first_deaths = parse_stat(stats_tds[12].text)
+
+                    # Insert into MatchHistoryPlayer
+                    new_match_history = MatchHistoryPlayer(
+                        match_id=match_id,
+                        player_id=player_id,
+                        team_id=team_id,
+                        agent=agent,
+                        kills=kills,
+                        assists=assists,
+                        deaths=deaths,
+                        acs=acs,
+                        kast=kast,
+                        adr=adr,
+                        first_kills=first_kills,
+                        first_deaths=first_deaths
+                    )
+                    session.merge(new_match_history)
+                    session.commit()
+                    print(f"Inserted stats for player {player_id} in match {match_id}.")
+
+                    # Prepare player data for MongoDB
+                    player_data = {
+                        "player_id": player_id,
+                        "agent": agent,
+                        "kills": kills,
+                        "deaths": deaths,
+                        "assists": assists,
+                        "acs": acs,
+                        "kast": f"{kast}%",
+                        "adr": adr,
+                        "first_kills": first_kills,
+                        "first_deaths": first_deaths
+                    }
+                    team_data["players"].append(player_data)
+
+            game_data["teams"].append(team_data)
+
+        # Since we process only one game_div, break after first iteration
+        break
+
+    # Insert game data into MongoDB
+    games_collection.insert_one(game_data)
+    print(f"Inserted game data for match {match_id} into MongoDB.")
+
+    # Delay to be respectful to the website's server
+    time.sleep(1)
+
 def scrape_player_page(player_url):
-    
-    internal_response = requests.get(url + player_url)
+    player_id = extract_player_id_from_url(player_url)
+    if not player_id:
+        print(f"Could not extract player_id from {player_url}")
+        return
+
+    # Check if player already exists in the database
+    existing_player = session.query(Player).filter_by(player_id=player_id).first()
+    if existing_player:
+        print(f"Player {existing_player.name} (ID: {player_id}) already exists in PostgreSQL.")
+        return
+
+    internal_response = requests.get(base_url + player_url)
     internal_soup = BeautifulSoup(internal_response.content, 'html.parser')
-    
-    # Find the div with class col-container
-    container = internal_soup.find('div', class_='col-container')
 
-    # Find the player-header div
-    player_header = container.find('div', class_='player-header')
+    # Extract player details
+    player_header = internal_soup.find('div', class_='player-header')
+    player_name_div = player_header.find('h1', class_='wf-title') if player_header else None
+    player_name = player_name_div.text.strip() if player_name_div else None
 
-    # Extract the player's name from the h1 tag
-    player_name = player_header.find('h1', class_='wf-title').text.strip()
+    # Get team and region information (adjust as needed based on actual HTML structure)
+    team_link = player_header.find('a', class_='player-header-team-name')
+    team_id = get_team(team_link['href']) if team_link else None
 
-    # Extract the player's real name from the h2 tag (if it exists)
-    player_real_name = player_header.find('h2', class_='player-real-name').text.strip()
+    region_name = player_header.find('div', class_='ge-text-light').text.strip()
+    region_id = get_region(region_name)
 
-    # Extract the nationality from the div containing the flag and country name
-    nationality_div = player_header.find('div', class_='ge-text-light')
-    nationality = nationality_div.text.strip()
-    print(player_name,player_real_name, nationality)
-    
-    mod_dark_div = container.find('div', class_='mod-dark')
-    
-    divs = mod_dark_div.find_all('div')
-    
-    # Loop through all the games
-    for div in divs:
-        a_tag = div.find('a')
-        if a_tag and a_tag['href']:
-            # Print the a tag link
-            scrape_game_data(a_tag['href'])
+    # Insert player into PostgreSQL
+    new_player = Player(
+        player_id=player_id,
+        name=player_name,
+        team_id=team_id,
+        role=None,  # Adjust if you can extract the role
+        region_id=region_id
+    )
+    session.add(new_player)
+    session.commit()
+    print(f"Inserted player {player_name} (ID: {player_id}) into PostgreSQL.")
 
 def scrape_data():
-    # Send request to the website
-    response = requests.get(url + '/stats')
+    response = requests.get(base_url + '/stats')
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Find the wf-card mod-table mod-dark div and loop through rows
+    # Find player links
     table = soup.find('div', class_='wf-card mod-table mod-dark')
-    rows = table.find('tbody').find_all('tr')
+    tbody = table.find('tbody') if table else None
+    rows = tbody.find_all('tr') if tbody else []
 
-    # Create a list to store new rows
-    new_data = []
-
-    # Iterate through rows and extract player data
     for row in rows:
         player_td = row.find('td', class_='mod-player mod-a')
         if player_td:
-            # Extract player name and URL
-            player_name = player_td.find('div', class_='text-of').text.strip()
-            player_url = player_td.find('a')['href'].replace('/player/', '/player/matches/')
-            
+            player_url = player_td.find('a')['href']
+            player_matches_url = player_url.replace('/player/', '/player/matches/')
             scrape_player_page(player_url)
-                                
-            # Append new data to the list
-            new_data.append({'player_name': player_name, 'player_url': player_url})
+            time.sleep(1)  # Delay between requests
 
-scrape_data()
+            # Scrape matches the player has participated in
+            internal_response = requests.get(base_url + player_matches_url)
+            internal_soup = BeautifulSoup(internal_response.content, 'html.parser')
+            match_links = internal_soup.find_all('a', href=True, class_='wf-card fc-flex m-item')
+            print(base_url + player_matches_url)
+            for a_tag in match_links:
+                scrape_game_data(a_tag['href'])
+                time.sleep(1)  # Delay between requests
+
+# ----------------------- Main Execution -----------------------
+
+if __name__ == "__main__":
+    try:
+        scrape_data()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        # Close the session when done
+        session.close()
+        # Close MongoDB connection
+        mongo_client.close()
