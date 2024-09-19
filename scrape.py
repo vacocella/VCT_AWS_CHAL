@@ -26,7 +26,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # MongoDB connection string
 MONGODB_URI = os.getenv('MONGODB_URI')
 
-event_url = 'https://www.vlr.gg/stats/?event_group_id=61&event_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
+tour_url = 'https://www.vlr.gg/vct-2024'
 
 # ----------------------- Relational Database Setup (PostgreSQL) -----------------------
 
@@ -59,51 +59,64 @@ class Player(Base):
     __tablename__ = 'players'
     player_id = Column(Integer, primary_key=True)
     name = Column(String(100))
-    team_id = Column(Integer, ForeignKey('teams.team_id'))
-    role = Column(String(50))
+    real_name = Column(String(100))
+    pp_url =  Column(String(300))
     region_id = Column(Integer, ForeignKey('regions.region_id'))
-
-    team = relationship('Team')
-    region = relationship('Region')
-
+    
 class Map(Base):
     __tablename__ = 'maps'
     map_id = Column(Integer, primary_key=True)
     map_name = Column(String(100))
     active = Column(Boolean, default=True)
+    
+class Tour():
+    __tablename__ = 'tours'
+    name = Column(String(100))
+    link = Column(String(1000))
+    start_date = Column(Date)
+    end_date = Column(Date)  
+    
+class Tour_Split():
+    __tablename__ = 'tour_split'
+    name = Column(String(100))
+    link = Column(String(1000))
+    start_date = Column(Date)
+    end_date = Column(Date)  
+    prize_pool = Column(Date)  
+    location = Column(String(500))  
 
-class Match(Base):
-    __tablename__ = 'matches'
-    match_id = Column(Integer, primary_key=True)
-    team1_id = Column(Integer, ForeignKey('teams.team_id'))
-    team2_id = Column(Integer, ForeignKey('teams.team_id'))
-    map_id = Column(Integer, ForeignKey('maps.map_id'))
-    date_played = Column(Date)
-    team1_score = Column(Integer)
-    team2_score = Column(Integer)
+# class Match(Base):
+#     __tablename__ = 'matches'
+#     match_id = Column(Integer, primary_key=True)
+#     team1_id = Column(Integer, ForeignKey('teams.team_id'))
+#     team2_id = Column(Integer, ForeignKey('teams.team_id'))
+#     map_id = Column(Integer, ForeignKey('maps.map_id'))
+#     date_played = Column(Date)
+#     team1_score = Column(Integer)
+#     team2_score = Column(Integer)
 
-    team1 = relationship('Team', foreign_keys=[team1_id])
-    team2 = relationship('Team', foreign_keys=[team2_id])
-    map = relationship('Map')
+#     team1 = relationship('Team', foreign_keys=[team1_id])
+#     team2 = relationship('Team', foreign_keys=[team2_id])
+#     map = relationship('Map')
 
-class MatchHistoryPlayer(Base):
-    __tablename__ = 'match_history_player'
-    match_id = Column(Integer, ForeignKey('matches.match_id'), primary_key=True)
-    player_id = Column(Integer, ForeignKey('players.player_id'), primary_key=True)
-    team_id = Column(Integer, ForeignKey('teams.team_id'))
-    agent = Column(String(50))
-    kills = Column(Integer)
-    assists = Column(Integer)
-    deaths = Column(Integer)
-    acs = Column(Float)
-    kast = Column(Float)
-    adr = Column(Float)
-    first_kills = Column(Integer)
-    first_deaths = Column(Integer)
+# class MatchHistoryPlayer(Base):
+#     __tablename__ = 'match_history_player'
+#     match_id = Column(Integer, ForeignKey('matches.match_id'), primary_key=True)
+#     player_id = Column(Integer, ForeignKey('players.player_id'), primary_key=True)
+#     team_id = Column(Integer, ForeignKey('teams.team_id'))
+#     agent = Column(String(50))
+#     kills = Column(Integer)
+#     assists = Column(Integer)
+#     deaths = Column(Integer)
+#     acs = Column(Float)
+#     kast = Column(Float)
+#     adr = Column(Float)
+#     first_kills = Column(Integer)
+#     first_deaths = Column(Integer)
 
-    match = relationship('Match')
-    player = relationship('Player')
-    team = relationship('Team')
+#     match = relationship('Match')
+#     player = relationship('Player')
+#     team = relationship('Team')
 
 # Create tables in the database
 Base.metadata.create_all(engine)
@@ -200,6 +213,9 @@ def scrape_game_data(game_url):
 
     # Extract match details
     match_header_super = game_soup.find('div', class_='match-header-super')
+    event_link = match_header_super.find('a', class_='match-header-event')['href']
+    
+    return
     date_div = match_header_super.find('div', {'data-utc-ts': True})
     # pdb.set_trace()
     date_played = date_div['data-utc-ts'] if date_div else None
@@ -376,12 +392,15 @@ def scrape_player_page(player_url):
 
     # Extract player details
     player_header = internal_soup.find('div', class_='player-header')
+    player_img_url = player_header.find('img')['src']
     player_name_div = player_header.find('h1', class_='wf-title') if player_header else None
+    player_name_real_div = player_header.find('h2', class_='player-real-name') if player_header else None
     player_name = player_name_div.text.strip() if player_name_div else None
+    player_name_real = player_name_real_div.text.strip() if player_name_real_div else None
 
-    # Get team and region information (adjust as needed based on actual HTML structure)
-    team_link = player_header.find('a', class_='player-header-team-name')
-    team_id = get_team(team_link['href']) if team_link else None
+    # # Get team and region information (adjust as needed based on actual HTML structure)
+    # team_link = player_header.find('a', class_='player-header-team-name')
+    # team_id = get_team(team_link['href']) if team_link else None
 
     region_name = player_header.find('div', class_='ge-text-light').text.strip()
     region_id = get_region(region_name)
@@ -390,8 +409,9 @@ def scrape_player_page(player_url):
     new_player = Player(
         player_id=player_id,
         name=player_name,
-        team_id=team_id,
-        role=None,  # Adjust if you can extract the role
+        real_name=player_name_real,
+        pp_url= player_img_url,
+        # team_id=team_id,
         region_id=region_id
     )
     session.add(new_player)
@@ -399,7 +419,7 @@ def scrape_player_page(player_url):
     print(f"Inserted player {player_name} (ID: {player_id}) into PostgreSQL.")
 
 def scrape_data():
-    response = requests.get(event_url)
+    response = requests.get(tour_url)
     soup = BeautifulSoup(response.content, 'html.parser')
 
     # Find player links
@@ -408,21 +428,24 @@ def scrape_data():
     rows = tbody.find_all('tr') if tbody else []
 
     for row in rows:
-        player_td = row.find('td', class_='mod-player mod-a')
-        if player_td:
-            player_url = player_td.find('a')['href']
-            player_matches_url = player_url.replace('/player/', '/player/matches/')
-            scrape_player_page(player_url)
-            # time.sleep(1)  # Delay between requests
-
-            # Scrape matches the player has participated in
-            internal_response = requests.get(base_url + player_matches_url)
-            internal_soup = BeautifulSoup(internal_response.content, 'html.parser')
-            match_links = internal_soup.find_all('a', href=True, class_='wf-card fc-flex m-item')
-            print(base_url + player_matches_url)
-            for a_tag in match_links:
-                scrape_game_data(a_tag['href'])
+        try:
+            player_td = row.find('td', class_='mod-player mod-a')
+            if player_td:
+                player_url = player_td.find('a')['href']
+                # player_matches_url = player_url.replace('/player/', '/player/matches/')
+                scrape_player_page(player_url)
                 # time.sleep(1)  # Delay between requests
+
+                # Scrape matches the player has participated in
+                # internal_response = requests.get(base_url + player_matches_url)
+                # internal_soup = BeautifulSoup(internal_response.content, 'html.parser')
+                # match_links = internal_soup.find_all('a', href=True, class_='wf-card fc-flex m-item')
+                # print(base_url + player_matches_url)
+                # for a_tag in match_links:
+                #     scrape_game_data(a_tag['href'])
+                    # time.sleep(1)  # Delay between requests
+        except e:
+            print(e)
 
 # ----------------------- Main Execution -----------------------
 
@@ -436,3 +459,9 @@ if __name__ == "__main__":
         session.close()
         # Close MongoDB connection
         mongo_client.close()
+
+
+
+# Idea: Go through tours 
+# get all splits 
+# 
