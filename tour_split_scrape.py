@@ -225,9 +225,21 @@ def get_team(team_link):
 def scrape_split(split_url, tour_title):
     response = requests.get(split_url)
     soup = BeautifulSoup(response.content, 'html.parser')
+    nav_bar = soup.find('div', class_='wf-nav')
     
+    nav_items = nav_bar.find_all('a', class_='wf-nav-item')
+
+    matches_in_split = nav_items[1]['href']
     
+    print(matches_in_split)
     
+    team_container = soup.find('div', class_='event-teams-container')
+    teams = team_container.find_all('div', class_='wf-card event-team')
+    
+    for team in teams:
+        team_link = team.find('a', class_='event-team-name')['href']
+        team_name = str(team.find('a', class_='event-team-name').text).strip()
+        print(team_name)
     
 def scrape_tour_data():
     response = requests.get(tour_url)
@@ -237,7 +249,7 @@ def scrape_tour_data():
     event_header = soup.find('div', class_='event-header')
     tour_title = event_header.find('div', class_='wf-title').text
     
-    tour_id = get_tour(tour_title)
+    # tour_id = get_tour(tour_title)
         
     events = soup.find_all('a', class_='wf-card mod-flex event-item')
 
@@ -245,7 +257,7 @@ def scrape_tour_data():
         try:
             print(row['href'])
             scrape_split(base_url + row['href'], tour_title)
-        except e:
+        except Exception as e:
             print(e)
 
 # ----------------------- Main Execution -----------------------
