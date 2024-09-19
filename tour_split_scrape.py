@@ -110,7 +110,7 @@ class Tour_Split():
 #     date_played = Column(Date)
 #     team1_score = Column(Integer)
 #     team2_score = Column(Integer)
-
+ 
 #     team1 = relationship('Team', foreign_keys=[team1_id])
 #     team2 = relationship('Team', foreign_keys=[team2_id])
 #     map = relationship('Map')
@@ -185,6 +185,16 @@ def get_region(region_name):
         session.commit()
     return region.region_id
 
+def get_tour(tour_name):
+    # Check if region exists
+    tour = session.query(Tour).filter_by(name=tour_name).first()
+    if not tour:
+        # Create new region
+        tour = Tour(name=tour_name)
+        session.add(tour)
+        session.commit()
+    return tour.tour_id
+
 def get_team(team_link):
     # Extract the team ID from the link
     team_id = int(team_link.split('/')[2])
@@ -212,11 +222,13 @@ def get_team(team_link):
     return team_id
 
 
-def scrape_split(split_url):
+def scrape_split(split_url, tour_title):
     response = requests.get(split_url)
     soup = BeautifulSoup(response.content, 'html.parser')
     
-
+    
+    
+    
 def scrape_tour_data():
     response = requests.get(tour_url)
     soup = BeautifulSoup(response.content, 'html.parser')
@@ -225,12 +237,14 @@ def scrape_tour_data():
     event_header = soup.find('div', class_='event-header')
     tour_title = event_header.find('div', class_='wf-title').text
     
+    tour_id = get_tour(tour_title)
+        
     events = soup.find_all('a', class_='wf-card mod-flex event-item')
 
     for row in events:
         try:
             print(row['href'])
-            scrape_split(base_url + row['href'])
+            scrape_split(base_url + row['href'], tour_title)
         except e:
             print(e)
 
@@ -246,8 +260,6 @@ if __name__ == "__main__":
         session.close()
         # Close MongoDB connection
         mongo_client.close()
-
-
 
 # Idea: Go through tours 
 # get all splits 
