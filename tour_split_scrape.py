@@ -11,6 +11,8 @@ import time
 from pymongo import MongoClient
 from datetime import datetime
 import pdb
+from urllib.parse import urlparse, parse_qs
+from datetime import datetime
 
 # ----------------------- Configuration -----------------------
 
@@ -26,22 +28,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # MongoDB connection string
 MONGODB_URI = os.getenv('MONGODB_URI')
 
-# NA
-event_url = 'https://www.vlr.gg/stats/?event_group_id=all&event_id=2004&series_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
-
-# China 
-event_url = 'https://www.vlr.gg/stats/?event_group_id=all&event_id=2006&series_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
-
-# EMEA
-event_url = 'https://www.vlr.gg/stats/?event_group_id=all&event_id=1998&series_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
-
-# Pacific
-event_url = 'https://www.vlr.gg/stats/?event_group_id=all&event_id=2002&series_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
-
-# game changers
-event_url = 'https://www.vlr.gg/stats/?event_group_id=62&event_id=all&region=all&min_rounds=200&min_rating=1550&agent=all&map_id=all&timespan=all'
-
-
+tour_url = 'https://www.vlr.gg/gc-2024'
 tour_url = 'https://www.vlr.gg/vct-2024'
 
 # ----------------------- Relational Database Setup (PostgreSQL) -----------------------
@@ -101,39 +88,6 @@ class Tour_Split():
     prize_pool = Column(Date)  
     location = Column(String(500))  
 
-# class Match(Base):
-#     __tablename__ = 'matches'
-#     match_id = Column(Integer, primary_key=True)
-#     team1_id = Column(Integer, ForeignKey('teams.team_id'))
-#     team2_id = Column(Integer, ForeignKey('teams.team_id'))
-#     map_id = Column(Integer, ForeignKey('maps.map_id'))
-#     date_played = Column(Date)
-#     team1_score = Column(Integer)
-#     team2_score = Column(Integer)
- 
-#     team1 = relationship('Team', foreign_keys=[team1_id])
-#     team2 = relationship('Team', foreign_keys=[team2_id])
-#     map = relationship('Map')
-
-# class MatchHistoryPlayer(Base):
-#     __tablename__ = 'match_history_player'
-#     match_id = Column(Integer, ForeignKey('matches.match_id'), primary_key=True)
-#     player_id = Column(Integer, ForeignKey('players.player_id'), primary_key=True)
-#     team_id = Column(Integer, ForeignKey('teams.team_id'))
-#     agent = Column(String(50))
-#     kills = Column(Integer)
-#     assists = Column(Integer)
-#     deaths = Column(Integer)
-#     acs = Column(Float)
-#     kast = Column(Float)
-#     adr = Column(Float)
-#     first_kills = Column(Integer)
-#     first_deaths = Column(Integer)
-
-#     match = relationship('Match')
-#     player = relationship('Player')
-#     team = relationship('Team')
-
 # Create tables in the database
 Base.metadata.create_all(engine)
 
@@ -173,6 +127,71 @@ def parse_stat(stat_text):
     else:
         return None
 
+
+
+def extract_event_details(event_header):
+    event_desc_items = event_header.find_all('div', class_='event-desc-item')
+    details = {}
+
+    for item in event_desc_items:
+        label_div = item.find('div', class_='event-desc-item-label')
+        value_div = item.find('div', class_='event-desc-item-value')
+
+        if label_div and value_div:
+            label = label_div.text.strip()
+            value = value_div.text.strip()
+
+            if label == 'Dates':
+                # Extract start_date and end_date
+                start_date, end_date = parse_dates(value)
+                details['start_date'] = start_date
+                details['end_date'] = end_date
+            elif label == 'Prize pool':
+                prize_pool = parse_prize_pool(value)
+                details['prize_pool'] = prize_pool
+            elif label == 'Location':
+                location = value
+                details['location'] = location
+
+    return details
+
+def parse_dates(date_str):
+    # Example date_str: 'Aug 1 - 25, 2024'
+    try:
+        # Split the date range
+        if '-' in date_str:
+            start_str, end_str = date_str.split('-')
+            start_str = start_str.strip()
+            end_str = end_str.strip()
+
+            # Handle cases where the month is only in the start date
+            if ',' not in start_str:
+                start_str += f", {end_str.split(',')[-1]}"
+
+            # Parse dates
+            start_date = datetime.strptime(start_str, '%b %d, %Y').date()
+            end_date = datetime.strptime(end_str, '%b %d, %Y').date()
+        else:
+            # Single date event
+            start_date = datetime.strptime(date_str, '%b %d, %Y').date()
+            end_date = start_date
+
+        return start_date, end_date
+    except Exception as e:
+        print(f"Error parsing dates: {e}")
+        return None, None
+
+def parse_prize_pool(prize_str):
+    # Example prize_str: '$2,250,000 USD'
+    try:
+        # Remove currency symbols and commas
+        amount_str = prize_str.replace('$', '').replace(',', '').split()[0]
+        prize_pool = float(amount_str)
+        return prize_pool
+    except Exception as e:
+        print(f"Error parsing prize pool: {e}")
+        return None
+
 # ----------------------- Scraping Functions -----------------------
 
 def get_region(region_name):
@@ -185,18 +204,51 @@ def get_region(region_name):
         session.commit()
     return region.region_id
 
-def get_tour(tour_name):
-    # Check if region exists
-    tour = session.query(Tour).filter_by(name=tour_name).first()
-    if not tour:
-        # Create new region
-        tour = Tour(name=tour_name)
-        session.add(tour)
-        session.commit()
-    return tour.tour_id
+def get_tour(tour_name, tour_link):
+    try:
+        tour = session.query(Tour).filter_by(name=tour_name).first()
+        if not tour:
+            tour = Tour(name=tour_name, link=tour_link)
+            session.add(tour)
+            session.commit()
+            print(f"Inserted tour '{tour_name}' into PostgreSQL.")
+        else:
+            print(f"Tour '{tour_name}' already exists in PostgreSQL.")
+        return tour.tour_id
+    except SQLAlchemyError as e:
+        session.rollback()
+        print(f"Database error while getting/creating tour '{tour_name}': {e}")
+        return None
 
+def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
+    try:
+        # Ensure you're comparing the column to the value
+        tour_split = session.query(Tour_Split).filter(Tour_Split.external_split_id == external_split_id).first()
+        if not tour_split:
+            tour_split = Tour_Split(
+                external_split_id=external_split_id,
+                tour_id=tour_id,
+                name=name,
+                link=link,
+                start_date=start_date,
+                end_date=end_date,
+                prize_pool=prize_pool,
+                location=location
+            )
+            session.add(tour_split)
+            session.commit()
+            print(f"Inserted tour split '{name}' into PostgreSQL.")
+        else:
+            print(f"Tour split '{name}' already exists in PostgreSQL.")
+        return tour_split.external_split_id
+    except SQLAlchemyError as e:
+        session.rollback()
+        print(f"Database error while getting/creating tour split '{name}': {e}")
+        return None
+    
 def get_team(team_link):
     # Extract the team ID from the link
+    
     team_id = int(team_link.split('/')[2])
     team_url = base_url + team_link
     team_res = requests.get(team_url)
@@ -222,24 +274,72 @@ def get_team(team_link):
     return team_id
 
 
-def scrape_split(split_url, tour_title):
+def scrape_split(split_url, tour_id):
     response = requests.get(split_url)
     soup = BeautifulSoup(response.content, 'html.parser')
     nav_bar = soup.find('div', class_='wf-nav')
     
     nav_items = nav_bar.find_all('a', class_='wf-nav-item')
-
-    matches_in_split = nav_items[1]['href']
     
-    print(matches_in_split)
+     # Extract the external_split_id from the URL
+    parsed_url = urlparse(split_url)
+    path_parts = parsed_url.path.strip('/').split('/')
+    external_split_id = int(path_parts[1]) if len(path_parts) > 1 else None
+    print(external_split_id)
+    
+     # Find the event header
+    event_header = soup.find('div', class_='event-header')
+    if event_header is None:
+        print("Error: 'event-header' div not found.")
+        return
+
+    # Extract split details
+    split_name_div = event_header.find('h1', class_='wf-title')
+    if split_name_div:
+        split_name = split_name_div.text.strip()
+    else:
+        split_name = 'Unknown Split'
+
+    # Extract additional details
+    details = extract_event_details(event_header)
+    start_date = details.get('start_date')
+    end_date = details.get('end_date')
+    prize_pool = details.get('prize_pool')
+    location = details.get('location')
+
+    # Extract external_split_id from the URL
+    parsed_url = urlparse(split_url)
+    path_parts = parsed_url.path.strip('/').split('/')
+    external_split_id = int(path_parts[1]) if len(path_parts) > 1 else None
+
+    # Get or create the tour split
+    get_tour_split(
+        external_split_id=external_split_id,
+        tour_id=tour_id,
+        name=split_name,
+        link=split_url,
+        start_date=start_date,
+        end_date=end_date,
+        prize_pool=prize_pool,
+        location=location
+    )
+    
+    matches_in_split = nav_items[1]['href']
+    # Extract series_id from the URL
     
     team_container = soup.find('div', class_='event-teams-container')
     teams = team_container.find_all('div', class_='wf-card event-team')
     
     for team in teams:
-        team_link = team.find('a', class_='event-team-name')['href']
-        team_name = str(team.find('a', class_='event-team-name').text).strip()
-        print(team_name)
+        team_link_tag = team.find('a', class_='event-team-name')
+        if not team_link_tag:
+            print("Team link not found.")
+            continue
+        
+        team_link = team_link_tag.get('href', '')
+        team_name = team_link_tag.text.strip()
+        print(f"Team Name: {team_name}, Team Link: {team_link}")
+        team_id = get_team(team_link)
     
 def scrape_tour_data():
     response = requests.get(tour_url)
@@ -248,15 +348,16 @@ def scrape_tour_data():
     # Find player links
     event_header = soup.find('div', class_='event-header')
     tour_title = event_header.find('div', class_='wf-title').text
-    
-    # tour_id = get_tour(tour_title)
+    tour_link = tour_url 
+    tour_id = get_tour(tour_title, tour_link)
         
     events = soup.find_all('a', class_='wf-card mod-flex event-item')
 
     for row in events:
         try:
             print(row['href'])
-            scrape_split(base_url + row['href'], tour_title)
+            split_link = base_url + row['href']
+            scrape_split(split_link, tour_id)
         except Exception as e:
             print(e)
 
