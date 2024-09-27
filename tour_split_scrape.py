@@ -41,27 +41,7 @@ session = Session()
 Base = declarative_base()
 
 
-def seed_maps(session):
-    valorant_maps = [
-        Map(map_name="Ascent", active=True),
-        Map(map_name="Bind", active=True),
-        Map(map_name="Haven", active=True),
-        Map(map_name="Split", active=True),
-        Map(map_name="Icebox", active=True),
-        Map(map_name="Breeze", active=True),
-        Map(map_name="Fracture", active=True),
-        Map(map_name="Pearl", active=True),
-        Map(map_name="Lotus", active=True),
-        Map(map_name="Sunset", active=True)
-    ]
-    
-    # Adding all maps to the session
-    session.add_all(valorant_maps)
-    
-    # Committing the session to save maps to the database
-    session.commit()
 
-seed_maps(session)
 
 # Define models according to your schema
 class Region(Base):
@@ -124,6 +104,42 @@ class Match(Base):
 
 # Create tables in the database
 Base.metadata.create_all(engine)
+
+# Populate Maps
+def seed_maps(session):
+    valorant_maps = [
+        Map(map_name="Ascent", active=True),
+        Map(map_name="Bind", active=True),
+        Map(map_name="Haven", active=True),
+        Map(map_name="Split", active=True),
+        Map(map_name="Icebox", active=True),
+        Map(map_name="Breeze", active=True),
+        Map(map_name="Fracture", active=True),
+        Map(map_name="Pearl", active=True),
+        Map(map_name="Lotus", active=True),
+        Map(map_name="Sunset", active=True)
+    ]
+    
+    # Adding all maps to the session
+    session.add_all(valorant_maps)
+    
+    # Committing the session to save maps to the database
+    session.commit()
+
+seed_maps(session)
+
+valorant_maps = [
+    "Ascent",  # index 0
+    "Bind",    # index 1
+    "Haven",   # index 2
+    "Split",   # index 3
+    "Icebox",  # index 4
+    "Breeze",  # index 5
+    "Fracture",# index 6
+    "Pearl",   # index 7
+    "Lotus",   # index 8
+    "Sunset"   # index 9
+]
 
 # ----------------------- NoSQL Database Setup (MongoDB) -----------------------
 
@@ -602,7 +618,6 @@ def scrape_split(split_url, tour_id):
     
     for match in matches:
         match_link = match['href'] 
-
 
 def scrape_tour_data():
     response = requests.get(tour_url)
