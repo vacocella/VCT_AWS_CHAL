@@ -282,36 +282,6 @@ def get_tour(tour_name, tour_link):
         print(f"Database error while getting/creating tour '{tour_name}': {e}")
         return None
 
-def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
-    try:
-        # Correct query using the column, not the class
-        print(external_split_id,tour_id,name,link,start_date,end_date,prize_pool,location)
-        
-        tour_split = session.query(Tour_Split).filter(Tour_Split.external_split_id == external_split_id).first()
-        print(tour_split)
-        if not tour_split:
-            tour_split = Tour_Split(
-                external_split_id=external_split_id,
-                tour_id=tour_id,
-                name=name,
-                link=link,
-                start_date=start_date,
-                end_date=end_date,
-                prize_pool=prize_pool,
-                location=location
-            )
-            session.add(tour_split)
-            session.commit()
-            print(f"Inserted tour split '{name}' into PostgreSQL.")
-        else:
-            print(f"Tour split '{name}' already exists in PostgreSQL.")
-        return tour_split.external_split_id
-    except SQLAlchemyError as e:
-        session.rollback()
-        print(f"Database error while getting/creating tour split '{name}': {e}")
-        input()
-        return None
-
 def get_team(team_link):
     # Extract the team ID from the link
     
@@ -430,6 +400,7 @@ def scrape_game_data(game_url):
             }
             tbody = table.find('tbody')
             rows = tbody.find_all('tr') if tbody else []
+            
             for row in rows:
                 player_td = row.find('td', class_='mod-player')
                 player_name_div = player_td.find('div', class_='text-of') if player_td else None
@@ -499,6 +470,36 @@ def scrape_game_data(game_url):
     session.commit()
     print(f"Inserted game data for match {match_id} into MongoDB.")
 
+def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
+    try:
+        # Correct query using the column, not the class
+        print(external_split_id,tour_id,name,link,start_date,end_date,prize_pool,location)
+        
+        tour_split = session.query(Tour_Split).filter(Tour_Split.external_split_id == external_split_id).first()
+        print(tour_split)
+        if not tour_split:
+            tour_split = Tour_Split(
+                external_split_id=external_split_id,
+                tour_id=tour_id,
+                name=name,
+                link=link,
+                start_date=start_date,
+                end_date=end_date,
+                prize_pool=prize_pool,
+                location=location
+            )
+            session.add(tour_split)
+            session.commit()
+            print(f"Inserted tour split '{name}' into PostgreSQL.")
+        else:
+            print(f"Tour split '{name}' already exists in PostgreSQL.")
+        return tour_split.external_split_id
+    except SQLAlchemyError as e:
+        session.rollback()
+        print(f"Database error while getting/creating tour split '{name}': {e}")
+        input()
+        return None
+
 def scrape_player_page(player_url):
     player_id = extract_player_id_from_url(player_url)
     if not player_id:
@@ -543,81 +544,80 @@ def scrape_player_page(player_url):
     print(f"Inserted player {player_name} (ID: {player_id}) into PostgreSQL.")
 
 def scrape_split(split_url, tour_id):
-    response = requests.get(split_url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    nav_bar = soup.find('div', class_='wf-nav')
-    
-    nav_items = nav_bar.find_all('a', class_='wf-nav-item')
-    
-     # Extract the external_split_id from the URL
-    parsed_url = urlparse(split_url)
-    path_parts = parsed_url.path.strip('/').split('/')
-    external_split_id = int(path_parts[1]) if len(path_parts) > 1 else None
-    print(external_split_id)
-    
-     # Find the event header
-    event_header = soup.find('div', class_='event-header')
-    if event_header is None:
-        print("Error: 'event-header' div not found.")
-        return
-
-    # Extract split details
-    split_name_div = event_header.find('h1', class_='wf-title')
-    if split_name_div:
-        split_name = split_name_div.text.strip()
-    else:
-        split_name = 'Unknown Split'
-
-    # Extract additional details
-    details = extract_event_details(event_header)
-    start_date = details.get('start_date')
-    end_date = details.get('end_date')
-    prize_pool = details.get('prize_pool')
-    location = details.get('location')
-
-    # Extract external_split_id from the URL
-    parsed_url = urlparse(split_url)
-    path_parts = parsed_url.path.strip('/').split('/')
-    external_split_id = int(path_parts[1]) if len(path_parts) > 1 else None
-
-    # Get or create the tour split
-    get_tour_split(
-        external_split_id=external_split_id,
-        tour_id=tour_id,
-        name=split_name,
-        link=split_url,
-        start_date=start_date,
-        end_date=end_date,
-        prize_pool=prize_pool,
-        location=location
-    )
-    
-    matches_in_split = nav_items[1]['href']
-    # Extract series_id from the URL
-    
-    team_container = soup.find('div', class_='event-teams-container')
-    teams = team_container.find_all('div', class_='wf-card event-team')
-    
-    for team in teams:
-        team_link_tag = team.find('a', class_='event-team-name')
-        if not team_link_tag:
-            print("Team link not found.")
-            continue
+    try:
+        response = requests.get(split_url)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        nav_bar = soup.find('div', class_='wf-nav')
         
-        team_link = team_link_tag.get('href', '')
-        team_name = team_link_tag.text.strip()
-        print(f"Team Name: {team_name}, Team Link: {team_link}")
-        team_id = get_team(team_link)
-    
-    
-    # scrape matches
-    response2 = requests.get(base_url + matches_in_split)
-    print(base_url + matches_in_split)
-    soup_matches = BeautifulSoup(response2.content, 'html.parser')
-    matches = soup_matches.find('a', class_='wf-module-item match-item mod-color')
-    
-    for match in matches:
-        match_link = match['href'] 
+        nav_items = nav_bar.find_all('a', class_='wf-nav-item')
+        
+        # Extract the external_split_id from the URL
+        parsed_url = urlparse(split_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        print(path_parts[1])
+        external_split_id = int(path_parts[1]) if len(path_parts) > 1 else None
+        
+        # Find the event header
+        event_header = soup.find('div', class_='event-header')
+        if event_header is None:
+            print("Error: 'event-header' div not found.")
+            return
+
+        # Extract split details
+        split_name_div = event_header.find('h1', class_='wf-title')
+        if split_name_div:
+            split_name = split_name_div.text.strip()
+        else:
+            split_name = 'Unknown Split'
+
+        # Extract additional details
+        details = extract_event_details(event_header)
+        start_date = details.get('start_date')
+        end_date = details.get('end_date')
+        prize_pool = details.get('prize_pool')
+        location = details.get('location')
+
+        # Get or create the tour split
+        get_tour_split(
+            external_split_id=external_split_id,
+            tour_id=tour_id,
+            name=split_name,
+            link=split_url,
+            start_date=start_date,
+            end_date=end_date,
+            prize_pool=prize_pool,
+            location=location
+        )
+        
+        matches_in_split = nav_items[1]['href']
+        # Extract series_id from the URL
+        
+        team_container = soup.find('div', class_='event-teams-container')
+        teams = team_container.find_all('div', class_='wf-card event-team')
+        
+        for team in teams:
+            team_link_tag = team.find('a', class_='event-team-name')
+            if not team_link_tag:
+                print("Team link not found.")
+                continue
+            
+            team_link = team_link_tag.get('href', '')
+            team_name = team_link_tag.text.strip()
+            print(f"Team Name: {team_name}, Team Link: {team_link}")
+            team_id = get_team(team_link)
+        
+        # scrape matches
+        response2 = requests.get(base_url + matches_in_split)
+        print(base_url + matches_in_split)
+        soup_matches = BeautifulSoup(response2.content, 'html.parser')
+        matches = soup_matches.find_all('a', class_='wf-module-item')
+        
+        for match in matches:
+            match_link = match['href'] 
+            scrape_game_data(match_link)
+    except Exception as e:
+        print(e)
+        input()
 
 def scrape_tour_data():
     response = requests.get(tour_url)
@@ -633,7 +633,7 @@ def scrape_tour_data():
     print(tour_id)
     for row in events:
         try:
-            print(row['href'])
+            print("HREF",row['href'])
             split_link = base_url + row['href']
             scrape_split(split_link, tour_id)
         except Exception as e:
