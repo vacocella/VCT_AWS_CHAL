@@ -2,7 +2,7 @@
 
 import requests
 from bs4 import BeautifulSoup
-from sqlalchemy import create_engine, Column, String, Integer, Float, Date, Boolean, ForeignKey,Numeric
+from sqlalchemy import create_engine,PrimaryKeyConstraint, Column, String, Integer, Float, Date, Boolean, ForeignKey,Numeric
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
@@ -73,6 +73,11 @@ class Map(Base):
     map_name = Column(String(100))
     active = Column(Boolean, default=True)
     
+class Agent(Base):
+    __tablename__ = 'agents'
+    agent_id = Column(Integer, primary_key=True)
+    agent_name = Column(String(50))
+    
 class Tour(Base):
     __tablename__ = 'tours'
     tour_id = Column(Integer, primary_key=True)
@@ -95,8 +100,13 @@ class Match(Base):
     match_id = Column(Integer, primary_key=True)
     team1_id = Column(Integer, ForeignKey('teams.team_id'))
     team2_id = Column(Integer, ForeignKey('teams.team_id'))
-    map_id = Column(Integer, ForeignKey('maps.map_id'))
     date_played = Column(Date)
+    
+class Game(Base):
+    __tablename__ = 'games'
+    game_id = Column(Integer, primary_key=True)
+    match_id = Column(Integer, ForeignKey('matches.match_id'))
+    map_id = Column(Integer, ForeignKey('maps.map_id'))
 
 class PlayerRole(Base):
     __tablename__ = 'player_roles'
@@ -105,12 +115,12 @@ class PlayerRole(Base):
     
 class GamePlayer(Base):
     __tablename__ = 'game_players'
-    game_id =  Column(Integer, primary_key=True)
-    match_id = Column(Integer, ForeignKey('matches.match_id'))
+    game_id = Column(Integer, ForeignKey('games.game_id'))
     player_id = Column(Integer, ForeignKey('players.player_id'))
     team_id = Column(Integer, ForeignKey('teams.team_id'))
     agent = Column(Integer, ForeignKey('agents.agent_id'))
     player_role = Column(Integer, ForeignKey('player_roles.role_id'))
+    ct_and_t_data = Column(Boolean)
     
     # CT-side statistics
     ct_kills = Column(Integer)
@@ -131,11 +141,20 @@ class GamePlayer(Base):
     t_adr = Column(Float)
     t_first_kills = Column(Integer)
     t_first_deaths = Column(Integer)
-
-class Agent(Base):
-    __tablename__ = 'agents'
-    agent_id = Column(Integer, primary_key=True)
-    agent_name = Column(String(50))
+    
+    # both statistics
+    both_kills = Column(Integer)
+    both_assists = Column(Integer)
+    both_deaths = Column(Integer)
+    both_acs = Column(Float)
+    both_kast = Column(Float)
+    both_adr = Column(Float)
+    both_first_kills = Column(Integer)
+    both_first_deaths = Column(Integer)
+    
+    __table_args__ = (
+        PrimaryKeyConstraint('game_id', 'player_id'),
+    )
 
 # Create tables in the database
 Base.metadata.create_all(engine)
@@ -152,7 +171,8 @@ def seed_maps(session):
         Map(map_name="Fracture", active=True),
         Map(map_name="Pearl", active=True),
         Map(map_name="Lotus", active=True),
-        Map(map_name="Sunset", active=True)
+        Map(map_name="Sunset", active=True),
+        Map(map_name="Unknown", active=True)
     ]
     
     # Adding all maps to the session
@@ -187,7 +207,8 @@ def seed_agents(session):
         Agent(agent_name="Fade"),
         Agent(agent_name="Harbor"),
         Agent(agent_name="Gekko"),
-        Agent(agent_name="Deadlock")
+        Agent(agent_name="Deadlock"),
+        Agent(agent_name="Unknown")
     ]
     
     # Adding all agents to the session
@@ -198,7 +219,6 @@ def seed_agents(session):
 
 # Seeding agents into the database
 seed_agents(session)
-
 
 valorant_maps = [
     "Ascent",  
@@ -211,6 +231,32 @@ valorant_maps = [
     "Pearl",  
     "Lotus",   
     "Sunset"   
+]
+
+agent_names = [
+    "Brimstone",
+    "Viper",
+    "Omen",
+    "Killjoy",
+    "Cypher",
+    "Sova",
+    "Sage",
+    "Phoenix",
+    "Jett",
+    "Reyna",
+    "Raze",
+    "Breach",
+    "Skye",
+    "Yoru",
+    "Astra",
+    "KAY/O",
+    "Chamber",
+    "Neon",
+    "Fade",
+    "Harbor",
+    "Gekko",
+    "Deadlock",
+    "Unknown"
 ]
 
 # ----------------------- NoSQL Database Setup (MongoDB) -----------------------
@@ -233,6 +279,7 @@ def extract_player_id_from_url(player_url):
         return None  # Unable to extract player_id
 
 def parse_stat(stat_text):
+    stat_text = stat_text.replace('\xa0', '').replace('&nbsp;', '').strip()
     stat_values = stat_text.strip().replace('%', '').split('\n')
     float_values = []
     for val in stat_values:
@@ -248,17 +295,29 @@ def parse_stat(stat_text):
     elif len(float_values) > 1:
         return sum(float_values) / len(float_values)
     else:
-        return None
+        return 0
 
 def parse_sides_stat(stat_td):
     
-    t = stat_td.find('span', class_="mod-t").text
-    ct = stat_td.find('span', class_="mod-ct").text
+    t = stat_td.find('span', class_="mod-t") 
+    ct = stat_td.find('span', class_="mod-ct")
+    both = stat_td.find('span', class_="mod-both")
     
-    t_side = parse_stat(t)
-    ct_side = parse_stat(ct)
+    t_side = 0
+    ct_side = 0
+    both_side = 0
+    side_data = False
     
-    return {"ct": t_side, "t": ct_side}
+    if t and ct:
+        t_side = parse_stat(t.text)
+        ct_side = parse_stat(ct.text)
+        side_data = True
+        
+        
+    if both:
+        both_side = parse_stat(both.text)
+    
+    return {"t": t_side, "ct": ct_side, "both": both_side, "side_data": side_data }
 
 def extract_event_details(event_header):
     event_desc_items = event_header.find_all('div', class_='event-desc-item')
@@ -332,6 +391,88 @@ def parse_prize_pool(prize_str):
         print(f"Error parsing prize pool: {e}")
         return None
 
+def insert_or_get_game_player(game_id, player_id, team_id, agent, player_role,side_data, ct_kills=0, ct_assists=0, ct_deaths=0, 
+                              ct_acs=0.0, ct_kast=0.0, ct_adr=0.0, ct_first_kills=0, ct_first_deaths=0,
+                              t_kills=0, t_assists=0, t_deaths=0, t_acs=0.0, t_kast=0.0, t_adr=0.0, 
+                              t_first_kills=0, t_first_deaths=0, both_kills=0, both_assists=0, both_deaths=0, both_acs=0.0, both_kast=0.0, both_adr=0.0, 
+                              both_first_kills=0, both_first_deaths=0):
+    # Check if the GamePlayer already exists
+    existing_game_player = session.query(GamePlayer).filter_by(game_id=game_id, player_id=player_id).first()
+    
+    if not existing_game_player:
+        # Insert the GamePlayer into the database
+        try:
+        
+            new_game_player = GamePlayer(
+                game_id=game_id,
+                player_id=player_id,
+                team_id=team_id,
+                agent=agent,
+                player_role=player_role,
+                ct_and_t_data=side_data,
+                ct_kills=ct_kills,
+                ct_assists=ct_assists,
+                ct_deaths=ct_deaths,
+                ct_acs=ct_acs,
+                ct_kast=ct_kast,
+                ct_adr=ct_adr,
+                ct_first_kills=ct_first_kills,
+                ct_first_deaths=ct_first_deaths,
+                t_kills=t_kills,
+                t_assists=t_assists,
+                t_deaths=t_deaths,
+                t_acs=t_acs,
+                t_kast=t_kast,
+                t_adr=t_adr,
+                t_first_kills=t_first_kills,
+                t_first_deaths=t_first_deaths,
+                both_kills=both_kills,
+                both_assists=both_assists,
+                both_deaths=both_deaths,
+                both_acs=both_acs,
+                both_kast=both_kast,
+                both_adr=both_adr,
+                both_first_kills=both_first_kills,
+                both_first_deaths=both_first_deaths
+            )
+            session.add(new_game_player)
+            session.commit()
+            print(f"Inserted new GamePlayer record for player_id {player_id} and game_id {game_id}.")
+        except Exception as e:
+            print(e)
+            
+            print(game_id, player_id, team_id, agent, player_role, ct_kills, ct_assists, ct_deaths,
+                  ct_acs, ct_kast, ct_adr, ct_first_kills, ct_first_deaths)
+            print('xxxxxxxxxxxxxxxxx')
+            print(t_kills, t_assists, t_deaths, t_acs, t_kast, t_adr, 
+                              t_first_kills, t_first_deaths)
+            input()
+            
+    else:
+        print(f"GamePlayer record for player_id {player_id} and game_id {game_id} already exists.")
+        input()
+    
+    return existing_game_player or new_game_player
+
+def insert_or_get_game(game_id, match_id, map_id):
+    # Check if the Game already exists
+    existing_game = session.query(Game).filter_by(game_id=game_id).first()
+    
+    if not existing_game:
+        # Insert the Game into the database
+        new_game = Game(
+            game_id=game_id,
+            match_id=match_id,
+            map_id=map_id
+        )
+        session.add(new_game)
+        session.commit()
+        print(f"Inserted new Game record with game_id {game_id} and match_id {match_id}.")
+    else:
+        print(f"Game record with game_id {game_id} already exists.")
+    
+    # Return the existing or new Game object
+    return existing_game or new_game
 # ----------------------- Scraping Functions -----------------------
 
 def get_region(region_name):
@@ -395,12 +536,6 @@ def get_team(team_link):
 def scrape_game_data(game_url):
     # Extract match_id from URL
     match_id = int(game_url.split('/')[1])
-    
-    # # Check if the match already exists in MongoDB
-    # existing_game = games_collection.find_one({'game_id': f'game_{match_id}'})
-    # if existing_game:
-    #     print(f"Game with game_id game_{match_id} already exists in MongoDB.")
-    #     return
 
     full_game_url = base_url + game_url
     print(f"Scraping game: {full_game_url}")
@@ -437,15 +572,10 @@ def scrape_game_data(game_url):
     team1_score = int(scores[0].text.strip()) if scores else None
     team2_score = int(scores[-1].text.strip()) if scores else None
 
-    # For simplicity, we'll use a placeholder map_id
-    map_id = 1  # You can adjust this to match actual map data
-
     # Insert match data into PostgreSQL
-    # existing_match = session.query(Match).filter_by(match_id=match_id).first()
-    # if existing_match:
-    #     return 
-
-    # Prepare game data for MongoDB
+    existing_match = session.query(Match).filter_by(match_id=match_id).first()
+    if existing_match:
+        return 
 
     # Process each team's player statistics
     vm_stats_games = game_soup.find_all('div', class_='vm-stats-game')
@@ -460,16 +590,28 @@ def scrape_game_data(game_url):
             },
         "games":[]
     }
+    
+    new_match = Match(
+            match_id=match_id,
+            team1_id=team1_id,
+            team2_id=team2_id,
+            date_played=date_played
+        )
+    
+    session.add(new_match)
+    session.commit()
+    print(f"Inserted game data for match {match_id} into post.")
 
     for game_div in vm_stats_games:
         
         game_id = game_div.get('data-game-id')
+        if game_id == 'all': continue
         
         game_data = {
             "game_id": game_id,
             "map": "Unknown",
             "teams": []
-        }    
+        }
         
         # Extract map name
         map_name_div = game_div.find('div', class_='map')
@@ -477,7 +619,13 @@ def scrape_game_data(game_url):
         map_name = map_name_span.text.strip() if map_name_span else None
         if map_name:
             game_data['map'] = ''.join(str(map_name).split()).replace("PICK", "")
-
+        
+        map_id = 11
+        if game_data['map'] in valorant_maps:
+            map_id = valorant_maps.index(game_data['map']) + 1
+            
+        insert_or_get_game(game_id, match_id, map_id)
+        
         player_tables = game_div.find_all('table', class_='wf-table-inset mod-overview')
         team_ids = [team1_id, team2_id]
         team_names = [team1_name, team2_name]
@@ -518,6 +666,11 @@ def scrape_game_data(game_url):
                     
                     for agent in agents_spans:
                         agents.append(agent.find('img')['title'])
+                    
+                    agent_id = 23
+                    if agents[0] in agent_names:
+                        agent_id = agent_names.index(agents[0]) + 1
+                    
                     # Statistics
                     kills = parse_sides_stat(stats_tds[4])
                     deaths = parse_sides_stat(stats_tds[5])
@@ -529,31 +682,73 @@ def scrape_game_data(game_url):
                     first_kills = parse_sides_stat(stats_tds[11])
                     first_deaths = parse_sides_stat(stats_tds[12])
 
-                    print(f"Inserted stats for player {player_id} in match {match_id}.")
-
                     # Prepare player data for MongoDB
                     player_data = {
                         "player_id": player_id,
-                        "agent": agents,
+                        "agent": agent_id,
+                        "side_data": kills["side_data"],
                         "t_kills": kills["t"],
                         "ct_kills": kills["ct"],
+                        "both_kills": kills["both"],
                         "t_deaths": deaths["t"],
                         "ct_deaths": deaths["ct"],
+                        "both_deaths": deaths["both"],
                         "t_assists": assists["t"],
                         "ct_assists": assists["ct"],
+                        "both_assists": assists["both"],
                         "t_acs": acs["t"],
                         "ct_acs": acs["ct"],
+                        "both_acs": acs["both"],
                         "t_kast": f"{kast['t']}%",
                         "ct_kast": f"{kast['ct']}%",
+                        "both_kast": f"{kast['both']}%",
                         "t_adr": adr["t"],
                         "ct_adr": adr["ct"],
+                        "both_adr": adr["both"],
                         "t_hs": hs["t"],
                         "ct_hs": hs["ct"],
+                        "both_hs": hs["both"],
                         "t_first_kills": first_kills["t"],
                         "ct_first_kills": first_kills["ct"],
+                        "both_first_kills": first_kills["both"],
                         "t_first_deaths": first_deaths["t"],
-                        "ct_first_deaths": first_deaths["ct"]
+                        "ct_first_deaths": first_deaths["ct"],
+                        "both_first_deaths": first_deaths["both"]
                     }
+                    
+                    
+                    game_player = insert_or_get_game_player(
+                        game_id=game_id,
+                        player_id=player_id,
+                        team_id=team_id,
+                        agent=agent_id,
+                        player_role=player_data.get("player_role", None), 
+                        side_data=player_data.get("side_data", None), 
+                        ct_kills=player_data.get("ct_kills", 0),
+                        t_kills=player_data.get("t_kills", 0),
+                        both_kills=player_data.get("both_kills", 0),
+                        ct_assists=player_data.get("ct_assists", 0),
+                        t_assists=player_data.get("t_assists", 0),
+                        both_assists=player_data.get("both_assists", 0),
+                        ct_deaths=player_data.get("ct_deaths", 0),
+                        t_deaths=player_data.get("t_deaths", 0),
+                        both_deaths=player_data.get("both_deaths", 0),
+                        ct_acs=player_data.get("ct_acs", 0.0),
+                        t_acs=player_data.get("t_acs", 0.0),
+                        both_acs=player_data.get("both_acs", 0.0),
+                        ct_kast=float(player_data.get("ct_kast", "0").strip('%')),  
+                        t_kast=float(player_data.get("t_kast", "0").strip('%')), 
+                        both_kast=float(player_data.get("both_kast", "0").strip('%')),
+                        ct_adr=player_data.get("ct_adr", 0.0),
+                        t_adr=player_data.get("t_adr", 0.0),
+                        both_adr=player_data.get("both_adr", 0.0),
+                        ct_first_kills=player_data.get("ct_first_kills", 0),
+                        t_first_kills=player_data.get("t_first_kills", 0),
+                        both_first_kills=player_data.get("both_first_kills", 0),
+                        ct_first_deaths=player_data.get("ct_first_deaths", 0),
+                        t_first_deaths=player_data.get("t_first_deaths", 0),
+                        both_first_deaths=player_data.get("both_first_deaths", 0)
+                    )
                     
                     team_data["players"].append(player_data)
 
@@ -561,17 +756,7 @@ def scrape_game_data(game_url):
         
         match["games"].append(game_data)
     
-    # new_match = Match(
-    #         match_id=match_id,
-    #         team1_id=team1_id,
-    #         team2_id=team2_id,
-    #         map_id=map_id,
-    #         date_played=date_played
-    #     )
-    # session.add(new_match)
-    # session.commit()
-    # print(f"Inserted game data for match {match_id} into MongoDB.")
-
+            
 def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
     try:
         # Correct query using the column, not the class
