@@ -452,12 +452,13 @@ def scrape_game_data(game_url):
     
     match = {
         "match_id": match_id,
-        "teams": [],
+        "teams": [team1_id,team2_id],
         "event": {
                 "event_name": event_name,
                 "date": date_played if date_played else None,
                 "patch": patch
-            }
+            },
+        "games":[]
     }
 
     for game_div in vm_stats_games:
@@ -466,7 +467,8 @@ def scrape_game_data(game_url):
         
         game_data = {
             "game_id": game_id,
-            "map": "Unknown"
+            "map": "Unknown",
+            "teams": []
         }    
         
         # Extract map name
@@ -555,7 +557,7 @@ def scrape_game_data(game_url):
                     
                     team_data["players"].append(player_data)
 
-            match["teams"].append(team_data)
+            game_data["teams"].append(team_data)
         
         match["games"].append(game_data)
     
