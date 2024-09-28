@@ -377,14 +377,23 @@ def scrape_game_data(game_url):
 
     # Process each team's player statistics
     vm_stats_games = game_soup.find_all('div', class_='vm-stats-game')
+    
 
     for game_div in vm_stats_games:
+        
+        rounds_col = game_div.find_all('div', class_='vlr-rounds-row-col')
+    
+        for round in rounds_col:
+            title = round.get('title')
+            if title:
+                game_data["rounds"].append(title)        
+        
         # Extract map name
         map_name_div = game_div.find('div', class_='map')
         map_name_span = map_name_div.find('span') if map_name_div else None
         map_name = map_name_span.text.strip() if map_name_span else None
         if map_name:
-            game_data['map'] = map_name
+            game_data['map'] = ''.join(str(map_name).split()).replace("PICK", "")
 
         player_tables = game_div.find_all('table', class_='wf-table-inset mod-overview')
         team_ids = [team1_id, team2_id]
@@ -449,8 +458,6 @@ def scrape_game_data(game_url):
 
             game_data["teams"].append(team_data)
 
-        # Since we process only one game_div, break after first iteration
-        break
 
     # Insert game data into MongoDB
     result = games_collection.insert_one(game_data)
@@ -464,7 +471,7 @@ def scrape_game_data(game_url):
             team2_id=team2_id,
             map_id=map_id,
             date_played=date_played,
-            document_id=document_id
+            document_id=str(document_id)
         )
     session.add(new_match)
     session.commit()
