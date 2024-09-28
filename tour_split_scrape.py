@@ -27,7 +27,7 @@ base_url = 'https://www.vlr.gg'
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 # MongoDB connection string
-MONGODB_URI = os.getenv('MONGODB_URI')
+# MONGODB_URI = os.getenv('MONGODB_URI')
 
 tour_url = 'https://www.vlr.gg/gc-2024'
 tour_url = 'https://www.vlr.gg/vct-2024'
@@ -39,9 +39,6 @@ engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 session = Session()
 Base = declarative_base()
-
-
-
 
 # Define models according to your schema
 class Region(Base):
@@ -100,7 +97,45 @@ class Match(Base):
     team2_id = Column(Integer, ForeignKey('teams.team_id'))
     map_id = Column(Integer, ForeignKey('maps.map_id'))
     date_played = Column(Date)
-    document_id = Column(String(500))
+
+class PlayerRole(Base):
+    __tablename__ = 'player_roles'
+    role_id = Column(Integer, primary_key=True)
+    role_name = Column(String(100))
+    
+class GamePlayer(Base):
+    __tablename__ = 'game_players'
+    game_id =  Column(Integer, primary_key=True)
+    match_id = Column(Integer, ForeignKey('matches.match_id'))
+    player_id = Column(Integer, ForeignKey('players.player_id'))
+    team_id = Column(Integer, ForeignKey('teams.team_id'))
+    agent = Column(Integer, ForeignKey('agents.agent_id'))
+    player_role = Column(Integer, ForeignKey('player_roles.role_id'))
+    
+    # CT-side statistics
+    ct_kills = Column(Integer)
+    ct_assists = Column(Integer)
+    ct_deaths = Column(Integer)
+    ct_acs = Column(Float)
+    ct_kast = Column(Float)
+    ct_adr = Column(Float)
+    ct_first_kills = Column(Integer)
+    ct_first_deaths = Column(Integer)
+
+    # T-side statistics
+    t_kills = Column(Integer)
+    t_assists = Column(Integer)
+    t_deaths = Column(Integer)
+    t_acs = Column(Float)
+    t_kast = Column(Float)
+    t_adr = Column(Float)
+    t_first_kills = Column(Integer)
+    t_first_deaths = Column(Integer)
+
+class Agent(Base):
+    __tablename__ = 'agents'
+    agent_id = Column(Integer, primary_key=True)
+    agent_name = Column(String(50))
 
 # Create tables in the database
 Base.metadata.create_all(engine)
@@ -128,29 +163,67 @@ def seed_maps(session):
 
 seed_maps(session)
 
+# Function to seed agents into the database
+def seed_agents(session):
+    valorant_agents = [
+        Agent(agent_name="Brimstone"),
+        Agent(agent_name="Viper"),
+        Agent(agent_name="Omen"),
+        Agent(agent_name="Killjoy"),
+        Agent(agent_name="Cypher"),
+        Agent(agent_name="Sova"),
+        Agent(agent_name="Sage"),
+        Agent(agent_name="Phoenix"),
+        Agent(agent_name="Jett"),
+        Agent(agent_name="Reyna"),
+        Agent(agent_name="Raze"),
+        Agent(agent_name="Breach"),
+        Agent(agent_name="Skye"),
+        Agent(agent_name="Yoru"),
+        Agent(agent_name="Astra"),
+        Agent(agent_name="KAY/O"),
+        Agent(agent_name="Chamber"),
+        Agent(agent_name="Neon"),
+        Agent(agent_name="Fade"),
+        Agent(agent_name="Harbor"),
+        Agent(agent_name="Gekko"),
+        Agent(agent_name="Deadlock")
+    ]
+    
+    # Adding all agents to the session
+    session.add_all(valorant_agents)
+    
+    # Committing the session to save agents to the database
+    session.commit()
+
+# Seeding agents into the database
+seed_agents(session)
+
+
 valorant_maps = [
-    "Ascent",  # index 0
-    "Bind",    # index 1
-    "Haven",   # index 2
-    "Split",   # index 3
-    "Icebox",  # index 4
-    "Breeze",  # index 5
-    "Fracture",# index 6
-    "Pearl",   # index 7
-    "Lotus",   # index 8
-    "Sunset"   # index 9
+    "Ascent",  
+    "Bind",    
+    "Haven",   
+    "Split",   
+    "Icebox",  
+    "Breeze",  
+    "Fracture",
+    "Pearl",  
+    "Lotus",   
+    "Sunset"   
 ]
 
 # ----------------------- NoSQL Database Setup (MongoDB) -----------------------
 
 # Create MongoDB client and access database and collections
-mongo_client = MongoClient(MONGODB_URI)
-mongo_db = mongo_client['valorantdb']  # You can name the database as you prefer
-games_collection = mongo_db['games']
+# mongo_client = MongoClient(MONGODB_URI)
+# mongo_db = mongo_client['valorantdb']  # You can name the database as you prefer
+# games_collection = mongo_db['games']
 
 # ----------------------- Helper Functions -----------------------
 
 def extract_player_id_from_url(player_url):
+
     url_parts = player_url.strip('/').split('/')
     try:
         idx = url_parts.index('player')
@@ -176,6 +249,16 @@ def parse_stat(stat_text):
         return sum(float_values) / len(float_values)
     else:
         return None
+
+def parse_sides_stat(stat_td):
+    
+    t = stat_td.find('span', class_="mod-t").text
+    ct = stat_td.find('span', class_="mod-ct").text
+    
+    t_side = parse_stat(t)
+    ct_side = parse_stat(ct)
+    
+    return {"ct": t_side, "t": ct_side}
 
 def extract_event_details(event_header):
     event_desc_items = event_header.find_all('div', class_='event-desc-item')
@@ -313,11 +396,11 @@ def scrape_game_data(game_url):
     # Extract match_id from URL
     match_id = int(game_url.split('/')[1])
     
-    # Check if the match already exists in MongoDB
-    existing_game = games_collection.find_one({'game_id': f'game_{match_id}'})
-    if existing_game:
-        print(f"Game with game_id game_{match_id} already exists in MongoDB.")
-        return
+    # # Check if the match already exists in MongoDB
+    # existing_game = games_collection.find_one({'game_id': f'game_{match_id}'})
+    # if existing_game:
+    #     print(f"Game with game_id game_{match_id} already exists in MongoDB.")
+    #     return
 
     full_game_url = base_url + game_url
     print(f"Scraping game: {full_game_url}")
@@ -358,35 +441,33 @@ def scrape_game_data(game_url):
     map_id = 1  # You can adjust this to match actual map data
 
     # Insert match data into PostgreSQL
-    existing_match = session.query(Match).filter_by(match_id=match_id).first()
-    if existing_match:
-        return 
+    # existing_match = session.query(Match).filter_by(match_id=match_id).first()
+    # if existing_match:
+    #     return 
 
     # Prepare game data for MongoDB
-    game_data = {
-        "game_id": f"game_{match_id}",
-        "map": "Unknown", 
-        "teams": [],
-        "rounds": [],  
-        "event": {
-            "event_name": event_name,
-            "date": date_played if date_played else None,
-            "patch": patch
-        }
-    }
 
     # Process each team's player statistics
     vm_stats_games = game_soup.find_all('div', class_='vm-stats-game')
     
+    match = {
+        "match_id": match_id,
+        "teams": [],
+        "event": {
+                "event_name": event_name,
+                "date": date_played if date_played else None,
+                "patch": patch
+            }
+    }
 
     for game_div in vm_stats_games:
         
-        rounds_col = game_div.find_all('div', class_='vlr-rounds-row-col')
-    
-        for round in rounds_col:
-            title = round.get('title')
-            if title:
-                game_data["rounds"].append(title)        
+        game_id = game_div.get('data-game-id')
+        
+        game_data = {
+            "game_id": game_id,
+            "map": "Unknown"
+        }    
         
         # Extract map name
         map_name_div = game_div.find('div', class_='map')
@@ -407,11 +488,13 @@ def scrape_game_data(game_url):
                 "team_name": team_name,
                 "players": []
             }
+            
             tbody = table.find('tbody')
             rows = tbody.find_all('tr') if tbody else []
             
             for row in rows:
                 player_td = row.find('td', class_='mod-player')
+                agents_td = row.find('td', class_='mod-agents')
                 player_name_div = player_td.find('div', class_='text-of') if player_td else None
                 player_name = player_name_div.text.strip() if player_name_div else None
                 player_href = player_td.find('a')['href'] if player_td else None
@@ -426,56 +509,66 @@ def scrape_game_data(game_url):
                     # Extract player stats
                     stats_tds = row.find_all('td')
 
-                    # Agent
-                    agent = stats_tds[1].find('img')['title'] if stats_tds[1].find('img') else None
-
+                    # Agents
+                    agents = []
+                    
+                    agents_spans = agents_td.find_all('span')
+                    
+                    for agent in agents_spans:
+                        agents.append(agent.find('img')['title'])
                     # Statistics
-                    kills = parse_stat(stats_tds[4].text)
-                    deaths = parse_stat(stats_tds[5].text)
-                    assists = parse_stat(stats_tds[6].text)
-                    acs = parse_stat(stats_tds[3].text)
-                    kast = parse_stat(stats_tds[8].text)
-                    adr = parse_stat(stats_tds[9].text)
-                    first_kills = parse_stat(stats_tds[11].text)
-                    first_deaths = parse_stat(stats_tds[12].text)
+                    kills = parse_sides_stat(stats_tds[4])
+                    deaths = parse_sides_stat(stats_tds[5])
+                    assists = parse_sides_stat(stats_tds[6])
+                    acs = parse_sides_stat(stats_tds[3])
+                    kast = parse_sides_stat(stats_tds[8])
+                    adr = parse_sides_stat(stats_tds[9])
+                    hs = parse_sides_stat(stats_tds[10])
+                    first_kills = parse_sides_stat(stats_tds[11])
+                    first_deaths = parse_sides_stat(stats_tds[12])
 
                     print(f"Inserted stats for player {player_id} in match {match_id}.")
 
                     # Prepare player data for MongoDB
                     player_data = {
                         "player_id": player_id,
-                        "agent": agent,
-                        "kills": kills,
-                        "deaths": deaths,
-                        "assists": assists,
-                        "acs": acs,
-                        "kast": f"{kast}%",
-                        "adr": adr,
-                        "first_kills": first_kills,
-                        "first_deaths": first_deaths
+                        "agent": agents,
+                        "t_kills": kills["t"],
+                        "ct_kills": kills["ct"],
+                        "t_deaths": deaths["t"],
+                        "ct_deaths": deaths["ct"],
+                        "t_assists": assists["t"],
+                        "ct_assists": assists["ct"],
+                        "t_acs": acs["t"],
+                        "ct_acs": acs["ct"],
+                        "t_kast": f"{kast['t']}%",
+                        "ct_kast": f"{kast['ct']}%",
+                        "t_adr": adr["t"],
+                        "ct_adr": adr["ct"],
+                        "t_hs": hs["t"],
+                        "ct_hs": hs["ct"],
+                        "t_first_kills": first_kills["t"],
+                        "ct_first_kills": first_kills["ct"],
+                        "t_first_deaths": first_deaths["t"],
+                        "ct_first_deaths": first_deaths["ct"]
                     }
+                    
                     team_data["players"].append(player_data)
 
-            game_data["teams"].append(team_data)
-
-
-    # Insert game data into MongoDB
-    result = games_collection.insert_one(game_data)
-
-    # Retrieve and store the inserted document's ID
-    document_id = result.inserted_id
+            match["teams"].append(team_data)
+        
+        match["games"].append(game_data)
     
-    new_match = Match(
-            match_id=match_id,
-            team1_id=team1_id,
-            team2_id=team2_id,
-            map_id=map_id,
-            date_played=date_played,
-            document_id=str(document_id)
-        )
-    session.add(new_match)
-    session.commit()
-    print(f"Inserted game data for match {match_id} into MongoDB.")
+    # new_match = Match(
+    #         match_id=match_id,
+    #         team1_id=team1_id,
+    #         team2_id=team2_id,
+    #         map_id=map_id,
+    #         date_played=date_played
+    #     )
+    # session.add(new_match)
+    # session.commit()
+    # print(f"Inserted game data for match {match_id} into MongoDB.")
 
 def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
     try:
@@ -657,7 +750,7 @@ if __name__ == "__main__":
         # Close the session when done
         session.close()
         # Close MongoDB connection
-        mongo_client.close()
+        # mongo_client.close()
 
 # Idea: Go through tours 
 # get all splits 
