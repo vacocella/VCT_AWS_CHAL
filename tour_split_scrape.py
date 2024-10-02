@@ -8,7 +8,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from dotenv import load_dotenv
 import os
 import time
-from pymongo import MongoClient
 from datetime import datetime
 import pdb
 from urllib.parse import urlparse, parse_qs
@@ -30,7 +29,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # MONGODB_URI = os.getenv('MONGODB_URI')
 
 tour_url = 'https://www.vlr.gg/gc-2024'
-tour_url = 'https://www.vlr.gg/vct-2024'
+# tour_url = 'https://www.vlr.gg/vct-2024'
 
 # ----------------------- Relational Database Setup (PostgreSQL) -----------------------
 
@@ -129,6 +128,7 @@ class GamePlayer(Base):
     ct_acs = Column(Float)
     ct_kast = Column(Float)
     ct_adr = Column(Float)
+    ct_hs = Column(Float)
     ct_first_kills = Column(Integer)
     ct_first_deaths = Column(Integer)
 
@@ -139,6 +139,7 @@ class GamePlayer(Base):
     t_acs = Column(Float)
     t_kast = Column(Float)
     t_adr = Column(Float)
+    t_hs = Column(Float)
     t_first_kills = Column(Integer)
     t_first_deaths = Column(Integer)
     
@@ -149,6 +150,7 @@ class GamePlayer(Base):
     both_acs = Column(Float)
     both_kast = Column(Float)
     both_adr = Column(Float)
+    both_hs = Column(Float)
     both_first_kills = Column(Integer)
     both_first_deaths = Column(Integer)
     
@@ -395,7 +397,7 @@ def insert_or_get_game_player(game_id, player_id, team_id, agent, player_role,si
                               ct_acs=0.0, ct_kast=0.0, ct_adr=0.0, ct_first_kills=0, ct_first_deaths=0,
                               t_kills=0, t_assists=0, t_deaths=0, t_acs=0.0, t_kast=0.0, t_adr=0.0, 
                               t_first_kills=0, t_first_deaths=0, both_kills=0, both_assists=0, both_deaths=0, both_acs=0.0, both_kast=0.0, both_adr=0.0, 
-                              both_first_kills=0, both_first_deaths=0):
+                              both_first_kills=0, both_first_deaths=0, t_hs=0, ct_hs=0, both_hs=0):
     # Check if the GamePlayer already exists
     existing_game_player = session.query(GamePlayer).filter_by(game_id=game_id, player_id=player_id).first()
     
@@ -433,7 +435,10 @@ def insert_or_get_game_player(game_id, player_id, team_id, agent, player_role,si
                 both_kast=both_kast,
                 both_adr=both_adr,
                 both_first_kills=both_first_kills,
-                both_first_deaths=both_first_deaths
+                both_first_deaths=both_first_deaths,
+                ct_hs=ct_hs,
+                t_hs=t_hs,
+                both_hs=both_hs
             )
             session.add(new_game_player)
             session.commit()
@@ -446,7 +451,6 @@ def insert_or_get_game_player(game_id, player_id, team_id, agent, player_role,si
             print('xxxxxxxxxxxxxxxxx')
             print(t_kills, t_assists, t_deaths, t_acs, t_kast, t_adr, 
                               t_first_kills, t_first_deaths)
-            input()
             
     else:
         print(f"GamePlayer record for player_id {player_id} and game_id {game_id} already exists.")
@@ -742,6 +746,9 @@ def scrape_game_data(game_url):
                         ct_adr=player_data.get("ct_adr", 0.0),
                         t_adr=player_data.get("t_adr", 0.0),
                         both_adr=player_data.get("both_adr", 0.0),
+                        ct_hs=player_data.get("ct_hs", 0.0),
+                        t_hs=player_data.get("t_hs", 0.0),
+                        both_hs=player_data.get("both_hs", 0.0),
                         ct_first_kills=player_data.get("ct_first_kills", 0),
                         t_first_kills=player_data.get("t_first_kills", 0),
                         both_first_kills=player_data.get("both_first_kills", 0),
@@ -784,7 +791,6 @@ def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date,
     except SQLAlchemyError as e:
         session.rollback()
         print(f"Database error while getting/creating tour split '{name}': {e}")
-        input()
         return None
 
 def scrape_player_page(player_url):
@@ -904,7 +910,6 @@ def scrape_split(split_url, tour_id):
             scrape_game_data(match_link)
     except Exception as e:
         print(e)
-        input()
 
 def scrape_tour_data():
     response = requests.get(tour_url)

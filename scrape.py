@@ -23,8 +23,8 @@ base_url = 'https://www.vlr.gg'
 # PostgreSQL connection string
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-# MongoDB connection string
-MONGODB_URI = os.getenv('MONGODB_URI')
+# # MongoDB connection string
+# MONGODB_URI = os.getenv('MONGODB_URI')
 
 tour_url = 'https://www.vlr.gg/vct-2024'
 
