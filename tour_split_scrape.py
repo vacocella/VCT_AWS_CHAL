@@ -42,13 +42,16 @@ session = Session()
 Base = declarative_base()
 
 # Define models according to your schema
+
+class Parent_Region(Base):
+    __tablename__ = 'parent_regions'
+    parent_region_id = Column(Integer, primary_key=True)
+    parent_region_name = Column(String(100))
+
 class Region(Base):
     __tablename__ = 'regions'
     region_id = Column(Integer, primary_key=True)
     region_name = Column(String(100))
-    larger_region_id = Column(Integer, ForeignKey('regions.region_id'), nullable=True)
-
-    larger_region = relationship('Region', remote_side=[region_id])
 
 class Team(Base):
     __tablename__ = 'teams'
@@ -89,6 +92,7 @@ class Tour_Split(Base):
     __tablename__ = 'tour_splits'
     external_split_id = Column(Integer, primary_key=True)
     tour_id = Column(Integer, ForeignKey('tours.tour_id'))
+    parent_region_id = Column(Integer, ForeignKey('parent_regions.parent_region_id'))
     name = Column(String(1000))
     link = Column(String(1000))
     start_date = Column(Date)  # Correct Date type
@@ -99,6 +103,7 @@ class Tour_Split(Base):
 class Match(Base):
     __tablename__ = 'matches'
     match_id = Column(Integer, primary_key=True)
+    tour_split_id = Column(Integer, ForeignKey('tour_splits.external_split_id'))
     team1_id = Column(Integer, ForeignKey('teams.team_id'))
     team2_id = Column(Integer, ForeignKey('teams.team_id'))
     date_played = Column(Date)
@@ -224,6 +229,23 @@ def seed_agents(session):
 # Seeding agents into the database
 seed_agents(session)
 
+def seed_regions(session):
+    valorant_regions = [
+        Parent_Region(parent_region_name="America"),
+        Parent_Region(parent_region_name="EMEA"),
+        Parent_Region(parent_region_name="Pacific"),
+        Parent_Region(parent_region_name="China"),
+    ]
+    
+    # Adding all valorant_regions to the session
+    session.add_all(valorant_regions)
+    
+    # Committing the session to save valorant_regions to the database
+    session.commit()
+
+# Seeding valorant_regions into the database
+seed_regions(session)
+
 valorant_maps = [
     "Ascent",  
     "Bind",    
@@ -261,6 +283,13 @@ agent_names = [
     "Gekko",
     "Deadlock",
     "Unknown"
+]
+
+parent_regions = [
+    'americas',
+    'emea'
+    'pacific',
+    'china',
 ]
 
 # ----------------------- NoSQL Database Setup (MongoDB) -----------------------
@@ -615,6 +644,7 @@ def scrape_game_data(game_url):
             match_id=match_id,
             team1_id=team1_id,
             team2_id=team2_id,
+
             date_played=date_played
         )
     
@@ -780,7 +810,7 @@ def scrape_game_data(game_url):
         match["games"].append(game_data)
     
             
-def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location):
+def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date, prize_pool, location, parent_region_id):
     try:
         # Correct query using the column, not the class
         print(external_split_id,tour_id,name,link,start_date,end_date,prize_pool,location)
@@ -796,6 +826,7 @@ def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date,
                 start_date=start_date,
                 end_date=end_date,
                 prize_pool=prize_pool,
+                parent_region_id=parent_region_id,
                 location=location
             )
             session.add(tour_split)
@@ -886,6 +917,11 @@ def scrape_split(split_url, tour_id):
         prize_pool = details.get('prize_pool')
         location = details.get('location')
 
+        parent_region_id = None
+        split_name = split_name.lower()
+        for index, word in enumerate(parent_regions):
+            if word in split_name:
+                parent_region_id = index
         # Get or create the tour split
         get_tour_split(
             external_split_id=external_split_id,
@@ -895,7 +931,8 @@ def scrape_split(split_url, tour_id):
             start_date=start_date,
             end_date=end_date,
             prize_pool=prize_pool,
-            location=location
+            location=location,
+            parent_region_id=parent_region_id
         )
         
         matches_in_split = nav_items[1]['href']
