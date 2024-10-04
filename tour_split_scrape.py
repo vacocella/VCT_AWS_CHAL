@@ -287,7 +287,7 @@ agent_names = [
 
 parent_regions = [
     'americas',
-    'emea'
+    'emea',
     'pacific',
     'china',
 ]
@@ -551,6 +551,7 @@ def get_tour(tour_name, tour_link):
     except SQLAlchemyError as e:
         session.rollback()
         print(f"Database error while getting/creating tour '{tour_name}': {e}")
+        input()
         return None
 
 def get_team(team_link):
@@ -582,7 +583,7 @@ def get_team(team_link):
         print(f"Team {team_name} (ID: {team_id}) already exists in PostgreSQL.")
     return team_id
 
-def scrape_game_data(game_url):
+def scrape_game_data(game_url,tour_split_id):
     # Extract match_id from URL
     match_id = int(game_url.split('/')[1])
 
@@ -644,6 +645,7 @@ def scrape_game_data(game_url):
             match_id=match_id,
             team1_id=team1_id,
             team2_id=team2_id,
+            tour_split_id=tour_split_id,
 
             date_played=date_played
         )
@@ -838,6 +840,7 @@ def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date,
     except SQLAlchemyError as e:
         session.rollback()
         print(f"Database error while getting/creating tour split '{name}': {e}")
+        input()
         return None
 
 def scrape_player_page(player_url):
@@ -921,9 +924,10 @@ def scrape_split(split_url, tour_id):
         split_name = split_name.lower()
         for index, word in enumerate(parent_regions):
             if word in split_name:
-                parent_region_id = index
+                parent_region_id = index + 1
+
         # Get or create the tour split
-        get_tour_split(
+        split_id = get_tour_split(
             external_split_id=external_split_id,
             tour_id=tour_id,
             name=split_name,
@@ -960,9 +964,10 @@ def scrape_split(split_url, tour_id):
         
         for match in matches:
             match_link = match['href'] 
-            scrape_game_data(match_link)
+            scrape_game_data(match_link,split_id)
     except Exception as e:
         print(e)
+        input()
 
 def scrape_tour_data(tour_url):
     response = requests.get(tour_url)
@@ -984,6 +989,7 @@ def scrape_tour_data(tour_url):
             scrape_split(split_link, tour_id)
         except Exception as e:
             print(e)
+            input()
 
 # ----------------------- Main Execution -----------------------
 
