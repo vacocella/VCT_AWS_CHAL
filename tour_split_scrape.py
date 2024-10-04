@@ -81,6 +81,8 @@ class Agent(Base):
     __tablename__ = 'agents'
     agent_id = Column(Integer, primary_key=True)
     agent_name = Column(String(50))
+    role = Column(String(20)) 
+    notes = Column(String(300), nullable=True)
     
 class Tour(Base):
     __tablename__ = 'tours'
@@ -195,30 +197,33 @@ seed_maps(session)
 # Function to seed agents into the database
 def seed_agents(session):
     valorant_agents = [
-        Agent(agent_name="Brimstone"),
-        Agent(agent_name="Viper"),
-        Agent(agent_name="Omen"),
-        Agent(agent_name="Killjoy"),
-        Agent(agent_name="Cypher"),
-        Agent(agent_name="Sova"),
-        Agent(agent_name="Sage"),
-        Agent(agent_name="Phoenix"),
-        Agent(agent_name="Jett"),
-        Agent(agent_name="Reyna"),
-        Agent(agent_name="Raze"),
-        Agent(agent_name="Breach"),
-        Agent(agent_name="Skye"),
-        Agent(agent_name="Yoru"),
-        Agent(agent_name="Astra"),
-        Agent(agent_name="KAY/O"),
-        Agent(agent_name="Chamber"),
-        Agent(agent_name="Neon"),
-        Agent(agent_name="Fade"),
-        Agent(agent_name="Harbor"),
-        Agent(agent_name="Gekko"),
-        Agent(agent_name="Deadlock"),
-        Agent(agent_name="Unknown")
+        Agent(agent_name="Brimstone", role="Controller"),
+        Agent(agent_name="Viper", role="Controller"),
+        Agent(agent_name="Omen", role="Controller"),
+        Agent(agent_name="Killjoy", role="Sentinel"),
+        Agent(agent_name="Cypher", role="Sentinel"),
+        Agent(agent_name="Sova", role="Initiator"),
+        Agent(agent_name="Sage", role="Sentinel"),
+        Agent(agent_name="Phoenix", role="Duelist"),
+        Agent(agent_name="Jett", role="Duelist"),
+        Agent(agent_name="Reyna", role="Duelist"),
+        Agent(agent_name="Raze", role="Duelist"),
+        Agent(agent_name="Breach", role="Initiator"),
+        Agent(agent_name="Skye", role="Initiator"),
+        Agent(agent_name="Yoru", role="Duelist"),
+        Agent(agent_name="Astra", role="Controller"),
+        Agent(agent_name="Kayo", role="Initiator"),
+        Agent(agent_name="Chamber", role="Sentinel"),
+        Agent(agent_name="Neon", role="Duelist"),
+        Agent(agent_name="Fade", role="Initiator"),
+        Agent(agent_name="Harbor", role="Controller"),
+        Agent(agent_name="Gekko", role="Initiator"),
+        Agent(agent_name="Deadlock", role="Sentinel"),
+        Agent(agent_name="Iso", role="Duelist"),
+        Agent(agent_name="Clove", role="Controller"),
+        Agent(agent_name="Vyse", role="Sentinel")
     ]
+
     
     # Adding all agents to the session
     session.add_all(valorant_agents)
@@ -275,14 +280,16 @@ agent_names = [
     "Skye",
     "Yoru",
     "Astra",
-    "KAY/O",
+    "Kayo",
     "Chamber",
     "Neon",
     "Fade",
     "Harbor",
     "Gekko",
     "Deadlock",
-    "Unknown"
+    "Iso",
+    "Clove",
+    "Vyse"
 ]
 
 parent_regions = [
@@ -497,7 +504,7 @@ def insert_or_get_game_player(game_id, player_id, team_id, agent, player_role,si
             
     else:
         print(f"GamePlayer record for player_id {player_id} and game_id {game_id} already exists.")
-        input()
+        # input()
     
     return existing_game_player or new_game_player
 
@@ -551,7 +558,7 @@ def get_tour(tour_name, tour_link):
     except SQLAlchemyError as e:
         session.rollback()
         print(f"Database error while getting/creating tour '{tour_name}': {e}")
-        input()
+        # input()
         return None
 
 def get_team(team_link):
@@ -719,9 +726,12 @@ def scrape_game_data(game_url,tour_split_id):
                     for agent in agents_spans:
                         agents.append(agent.find('img')['title'])
                     
-                    agent_id = 23
+                    agent_id = -1
                     if agents[0] in agent_names:
                         agent_id = agent_names.index(agents[0]) + 1
+                    else:
+                        print(agents[0])
+                        input()
                     
                     # Statistics
                     kills = parse_sides_stat(stats_tds[4])
@@ -840,7 +850,7 @@ def get_tour_split(external_split_id, tour_id, name, link, start_date, end_date,
     except SQLAlchemyError as e:
         session.rollback()
         print(f"Database error while getting/creating tour split '{name}': {e}")
-        input()
+        # input()
         return None
 
 def scrape_player_page(player_url):
@@ -967,7 +977,7 @@ def scrape_split(split_url, tour_id):
             scrape_game_data(match_link,split_id)
     except Exception as e:
         print(e)
-        input()
+        # input()
 
 def scrape_tour_data(tour_url):
     response = requests.get(tour_url)
@@ -989,7 +999,7 @@ def scrape_tour_data(tour_url):
             scrape_split(split_link, tour_id)
         except Exception as e:
             print(e)
-            input()
+            # input()
 
 # ----------------------- Main Execution -----------------------
 
